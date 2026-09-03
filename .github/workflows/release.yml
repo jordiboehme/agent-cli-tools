@@ -1,0 +1,347 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Manual dry run: builds, signs when secrets exist, packages, and stops
+  # short of publishing. The publish and homebrew jobs only run for a tag.
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Every binary the package builds, space separated. Adding a command means
+  # adding its name here and a bin.install line in the formula below.
+  BINARIES: timeout
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            platform: macos-arm64
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            platform: macos-intel
+            # The last Intel image GitHub ships; it retires in August 2027.
+            os: macos-15-intel
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust toolchain
+        run: rustup show
+
+      - name: Add release target
+        run: rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=v0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A tag that disagrees with Cargo.toml would ship a binary whose
+      # --version lies about itself. Catch it before anything is built.
+      - name: Tag matches Cargo.toml
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="v$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          if [ "$manifest" != "${{ github.ref_name }}" ]; then
+            echo "::error::tag ${{ github.ref_name }} does not match Cargo.toml version $manifest"
+            exit 1
+          fi
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bin in $BINARIES; do
+            path="target/${{ matrix.target }}/release/$bin"
+            [ -f "$path" ] || { echo "::error::$path is missing"; exit 1; }
+            "$path" --version
+          done
+          target/${{ matrix.target }}/release/timeout 5 true
+          target/${{ matrix.target }}/release/timeout 0.2 sleep 5 && exit 1 || [ $? -eq 124 ]
+
+      # Sign each bare Mach-O with a Developer ID Application certificate
+      # under the hardened runtime, then notarize with notarytool. A bare
+      # binary cannot carry a stapled ticket, so Gatekeeper checks online on
+      # first run. A tag build must sign; a dry run without any secrets
+      # produces unsigned binaries and says so.
+      - name: Decide whether to sign and notarize
+        id: signing
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for var in APPLE_CERTIFICATE_P12 APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID \
+                     APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER_ID; do
+            [ -n "${!var:-}" ] || missing+=("$var")
+          done
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+          elif [ "${#missing[@]}" -eq 6 ] && [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "::notice::Apple signing secrets are not configured; this dry run produces UNSIGNED binaries"
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Apple signing secrets missing (${missing[*]}); a tag build must sign and a partial secret set is always a misconfiguration"
+            exit 1
+          fi
+
+      - name: Set up signing keychain
+        if: steps.signing.outputs.sign == 'true'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          cert="$RUNNER_TEMP/certificate.p12"
+          printf '%s' "$APPLE_CERTIFICATE_P12" | base64 --decode > "$cert"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$cert" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm -f "$cert"
+
+      - name: Sign the binaries
+        if: steps.signing.outputs.sign == 'true'
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          identity="$(security find-identity -v -p codesigning "$keychain" \
+            | awk -F'"' '/Developer ID Application/ { print $2; exit }')"
+          if [ -z "$identity" ]; then
+            echo "::error::no Developer ID Application identity found in the signing keychain"
+            exit 1
+          fi
+          for bin in $BINARIES; do
+            path="target/${{ matrix.target }}/release/$bin"
+            identifier="io.github.jordiboehme.agent-cli-tools.$bin"
+            codesign --force --timestamp --options runtime \
+              --identifier "$identifier" \
+              --keychain "$keychain" \
+              --sign "$identity" \
+              "$path"
+            codesign --verify --strict --verbose=2 "$path"
+            info="$(codesign --display --verbose=2 "$path" 2>&1)"
+            echo "$info"
+            grep -q "Identifier=$identifier" <<< "$info"
+            grep -q "TeamIdentifier=${APPLE_TEAM_ID}" <<< "$info"
+            grep -q "(runtime)" <<< "$info"
+          done
+
+      - name: Notarize the binaries
+        if: steps.signing.outputs.sign == 'true'
+        shell: bash
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/asc-key.p8"
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$key"
+          zip="$RUNNER_TEMP/notarize.zip"
+          rm -f "$zip"
+          for bin in $BINARIES; do
+            ditto -c -k --keepParent "target/${{ matrix.target }}/release/$bin" "$RUNNER_TEMP/notarize-$bin.zip"
+          done
+          for bin in $BINARIES; do
+            result="$RUNNER_TEMP/notarize-$bin.json"
+            set +e
+            xcrun notarytool submit "$RUNNER_TEMP/notarize-$bin.zip" \
+              --key "$key" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" \
+              --wait --timeout 30m --output-format json > "$result"
+            submit_rc=$?
+            set -e
+            cat "$result"
+            status="$(jq -r '.status // "unknown"' "$result")"
+            if [ "$submit_rc" -ne 0 ] || [ "$status" != "Accepted" ]; then
+              echo "::error::notarization of $bin failed (notarytool exit $submit_rc, status $status)"
+              submission_id="$(jq -r '.id // empty' "$result")"
+              if [ -n "$submission_id" ]; then
+                xcrun notarytool log "$submission_id" \
+                  --key "$key" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" || true
+              fi
+              exit 1
+            fi
+          done
+          rm -f "$RUNNER_TEMP"/notarize-*.zip
+
+      - name: Smoke test the signed binaries
+        if: steps.signing.outputs.sign == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bin in $BINARIES; do
+            "target/${{ matrix.target }}/release/$bin" --version
+          done
+          target/${{ matrix.target }}/release/timeout 5 true
+
+      - name: Delete signing keychain
+        if: always()
+        shell: bash
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          if [ -f "$keychain" ]; then
+            security delete-keychain "$keychain"
+          fi
+          rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/asc-key.p8" "$RUNNER_TEMP"/notarize-*
+
+      - name: Stage and package
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="agent-cli-tools-${{ steps.version.outputs.version }}-${{ matrix.platform }}"
+          stage="dist/$name"
+          mkdir -p "$stage"
+          for bin in $BINARIES; do
+            cp "target/${{ matrix.target }}/release/$bin" "$stage/"
+          done
+          cp LICENSE README.md "$stage/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-cli-tools-${{ matrix.platform }}
+          path: dist/${{ steps.stage.outputs.name }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Download all archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: downloads
+
+      - name: Collect archives and generate checksums
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find downloads -type f -name '*.tar.gz' -exec cp {} release/ \;
+          cd release
+          sha256sum * > SHA256SUMS
+          ls -la
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ github.ref_name }}" release/* \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
+
+  homebrew:
+    name: update homebrew tap
+    needs: publish
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+    steps:
+      - name: Download release checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/release
+          gh release download "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --pattern SHA256SUMS --dir /tmp/release
+
+      - name: Regenerate and push the formula
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          sums="/tmp/release/SHA256SUMS"
+          sha_arm=$(grep "agent-cli-tools-${TAG}-macos-arm64.tar.gz" "$sums" | awk '{print $1}')
+          sha_intel=$(grep "agent-cli-tools-${TAG}-macos-intel.tar.gz" "$sums" | awk '{print $1}')
+
+          git clone "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/jordiboehme/homebrew-tap.git" \
+            "${{ runner.temp }}/homebrew-tap"
+          mkdir -p "${{ runner.temp }}/homebrew-tap/Formula"
+
+          cat > "${{ runner.temp }}/homebrew-tap/Formula/agent-cli-tools.rb" << FORMULA
+          class AgentCliTools < Formula
+            desc "The missing CLI commands for agent harnesses"
+            homepage "https://github.com/jordiboehme/agent-cli-tools"
+            license "MIT"
+            version "${VERSION}"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/jordiboehme/agent-cli-tools/releases/download/v#{version}/agent-cli-tools-v#{version}-macos-arm64.tar.gz"
+                sha256 "${sha_arm}"
+              end
+
+              on_intel do
+                url "https://github.com/jordiboehme/agent-cli-tools/releases/download/v#{version}/agent-cli-tools-v#{version}-macos-intel.tar.gz"
+                sha256 "${sha_intel}"
+              end
+            end
+
+            def install
+              bin.install "timeout"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/timeout --version")
+              shell_output("#{bin}/timeout 0.1 sleep 5", 124)
+            end
+          end
+          FORMULA
+
+          cd "${{ runner.temp }}/homebrew-tap"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/agent-cli-tools.rb
+          git commit -m "Update agent-cli-tools to ${VERSION}"
+          git push
