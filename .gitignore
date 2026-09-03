@@ -1,0 +1,15 @@
+# Build artifacts
+/target/
+/dist/
+
+# Local project instructions, plans and research (not part of the published repo)
+/CLAUDE.md
+/plans/
+/research/
+
+# OS noise
+.DS_Store
+
+# Editor state
+.idea/
+.vscode/
