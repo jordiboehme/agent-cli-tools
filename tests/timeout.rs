@@ -138,6 +138,9 @@ fn help_and_version() {
     assert_eq!(code(&out), 0);
     let expected = format!("timeout (agent-cli-tools) {}\n", env!("CARGO_PKG_VERSION"));
     assert!(stdout(&out).starts_with(&expected), "got {}", stdout(&out));
+    assert!(
+        stdout(&out).ends_with("Home page: <https://github.com/jordiboehme/agent-cli-tools>\n")
+    );
     assert!(stderr(&out).is_empty());
 
     // Long option prefixes are accepted and --help wins as soon as it is seen.
