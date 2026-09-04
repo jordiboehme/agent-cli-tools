@@ -35,6 +35,10 @@ pub struct Opt {
 /// dashes included, rather than being reparsed as options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
+    /// Options are recognized wherever they appear, before or after an
+    /// operand. This does not reorder argv the way libc's getopt_long
+    /// permute mode does: operands and flags simply come back as `Item`s
+    /// in the order the command line gave them.
     Permute,
     StopAtFirstOperand,
 }
@@ -72,12 +76,11 @@ impl Parser {
 
     /// Parse `args`, returning every item in order, or the GNU diagnostic
     /// text (without the program-name prefix a caller adds on report) if
-    /// any token failed to parse. Use this when nothing needs to act until
-    /// the whole line is known good. A command with an option that must
-    /// take effect the moment it is reached, such as `--help`, wants
-    /// `parse_partial` instead: GNU getopt hands each option to the caller
-    /// as it scans, so `--help --bogus` prints help while `--bogus --help`
-    /// reports the bad option.
+    /// any token failed to parse. Discards whatever parsed before an
+    /// error; use this when nothing needs to act until the whole line is
+    /// known good. A command with an option that must take effect the
+    /// moment it is reached, such as `--help`, wants `parse_partial`
+    /// instead.
     pub fn parse(&self, args: &[OsString]) -> Result<Vec<Item>, String> {
         let (items, error) = self.parse_partial(args);
         match error {
@@ -86,11 +89,14 @@ impl Parser {
         }
     }
 
-    /// Parse as far as possible, returning every item recognized before a
-    /// diagnostic (if any) ended the scan. A caller that must let earlier
-    /// options like `--help` act before a later bad option is even seen
-    /// walks these items in order, then checks for a pending error only
-    /// once the walk is done.
+    /// Parse as far as possible: returns the items recognized before the
+    /// first failure, plus that failure's diagnostic text, if the scan
+    /// stopped early. Unlike GNU getopt_long, which keeps scanning past a
+    /// bad option and can report several, this stops at the first one and
+    /// goes no further. A caller that must let an earlier option such as
+    /// `--help` act before a later bad option is even inspected walks the
+    /// returned items in order, then checks for a pending error only once
+    /// that walk is done.
     pub fn parse_partial(&self, args: &[OsString]) -> (Vec<Item>, Option<String>) {
         let mut items = Vec::new();
         let mut i = 0;
@@ -344,9 +350,10 @@ mod tests {
         Parser::new("t", OPTS, mode).parse(&owned)
     }
 
-    /// The `&'static str` a real `Opt` table hands back for `long`, so a
-    /// test fixture can build one without leaking memory of its own.
-    fn leak(long: &str) -> &'static str {
+    /// Looks up `long` in `OPTS` and hands back the `&'static str` already
+    /// owned by that entry, so a test fixture can build an `Item::Flag`
+    /// without leaking memory of its own.
+    fn long_name(long: &str) -> &'static str {
         OPTS.iter()
             .find(|o| o.long == long)
             .map(|o| o.long)
@@ -355,13 +362,13 @@ mod tests {
 
     fn flag(long: &str) -> Item {
         Item::Flag {
-            long: leak(long),
+            long: long_name(long),
             value: None,
         }
     }
     fn flag_with(long: &str, value: &str) -> Item {
         Item::Flag {
-            long: leak(long),
+            long: long_name(long),
             value: Some(OsString::from(value)),
         }
     }
