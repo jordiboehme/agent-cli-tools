@@ -5,8 +5,9 @@
 //! `src/bin/timeout.rs`, generalized with `Arg::Optional` and the two
 //! operand-scanning modes GNU getopt itself supports.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
+use std::os::unix::ffi::OsStrExt;
 use std::process;
 
 /// Whether an option takes an argument, and if so whether it may be omitted.
@@ -39,11 +40,17 @@ pub enum Mode {
 }
 
 /// One parsed item, in the order the command line gave them.
+///
+/// `Flag.value` is an `OsString`, not a `String`: an option argument (a
+/// separator, a path) is not required to be valid UTF-8, and this parser
+/// must not corrupt it before the command it belongs to ever sees it. A
+/// caller converts with `to_string_lossy()` where it wants text and
+/// `OsStrExt::as_bytes()` where it wants bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
     Flag {
         long: &'static str,
-        value: Option<String>,
+        value: Option<OsString>,
     },
     Operand(OsString),
 }
@@ -63,40 +70,66 @@ impl Parser {
         }
     }
 
-    /// Parse `args`, returning the items in order or the GNU diagnostic
-    /// text (without the program-name prefix a caller adds on report).
+    /// Parse `args`, returning every item in order, or the GNU diagnostic
+    /// text (without the program-name prefix a caller adds on report) if
+    /// any token failed to parse. Use this when nothing needs to act until
+    /// the whole line is known good. A command with an option that must
+    /// take effect the moment it is reached, such as `--help`, wants
+    /// `parse_partial` instead: GNU getopt hands each option to the caller
+    /// as it scans, so `--help --bogus` prints help while `--bogus --help`
+    /// reports the bad option.
     pub fn parse(&self, args: &[OsString]) -> Result<Vec<Item>, String> {
+        let (items, error) = self.parse_partial(args);
+        match error {
+            Some(message) => Err(message),
+            None => Ok(items),
+        }
+    }
+
+    /// Parse as far as possible, returning every item recognized before a
+    /// diagnostic (if any) ended the scan. A caller that must let earlier
+    /// options like `--help` act before a later bad option is even seen
+    /// walks these items in order, then checks for a pending error only
+    /// once the walk is done.
+    pub fn parse_partial(&self, args: &[OsString]) -> (Vec<Item>, Option<String>) {
         let mut items = Vec::new();
         let mut i = 0;
         // Set once by `--`, or by the first operand in StopAtFirstOperand:
         // every remaining token is an operand, dashes and all.
         let mut operands_only = false;
         while i < args.len() {
+            let raw = &args[i];
             if operands_only {
-                items.push(Item::Operand(args[i].clone()));
+                items.push(Item::Operand(raw.clone()));
                 i += 1;
                 continue;
             }
-            let text = args[i].to_string_lossy();
+            let text = raw.to_string_lossy();
             if text == "--" {
                 operands_only = true;
                 i += 1;
                 continue;
             }
             if let Some(rest) = text.strip_prefix("--") {
-                let (name, inline) = match rest.split_once('=') {
-                    Some((n, v)) => (n, Some(v.to_string())),
+                // "--" is two bytes, both ASCII, so this byte offset into
+                // the lossy text is also correct against the raw bytes.
+                let (name, eq_at) = match rest.find('=') {
+                    Some(eq) => (&rest[..eq], Some(2 + eq)),
                     None => (rest, None),
                 };
-                let opt = self.resolve_long(name, &text)?;
+                let opt = match self.resolve_long(name, &text) {
+                    Ok(opt) => opt,
+                    Err(message) => return (items, Some(message)),
+                };
                 i += 1;
+                let inline = eq_at.map(|at| os_from_bytes(&raw.as_bytes()[at + 1..]));
                 let value = match opt.arg {
                     Arg::None => {
                         if inline.is_some() {
-                            return Err(format!(
-                                "option '--{}' doesn't allow an argument",
-                                opt.long
-                            ));
+                            return (
+                                items,
+                                Some(format!("option '--{}' doesn't allow an argument", opt.long)),
+                            );
                         }
                         None
                     }
@@ -104,12 +137,12 @@ impl Parser {
                         Some(v) => Some(v),
                         None => {
                             if i >= args.len() {
-                                return Err(format!(
-                                    "option '--{}' requires an argument",
-                                    opt.long
-                                ));
+                                return (
+                                    items,
+                                    Some(format!("option '--{}' requires an argument", opt.long)),
+                                );
                             }
-                            let v = args[i].to_string_lossy().into_owned();
+                            let v = args[i].clone();
                             i += 1;
                             Some(v)
                         }
@@ -123,10 +156,18 @@ impl Parser {
                     value,
                 });
             } else if text.len() > 1 && text.starts_with('-') {
+                // Every char up to and including the one that takes a
+                // value is a single-byte ASCII short option letter, so its
+                // position in this lossy text is also its byte offset in
+                // the raw argument, which is what the value is sliced from.
                 let cluster = text[1..].to_string();
+                let raw_bytes = raw.as_bytes();
                 i += 1;
                 for (pos, flag) in cluster.char_indices() {
-                    let opt = self.resolve_short(flag)?;
+                    let opt = match self.resolve_short(flag) {
+                        Ok(opt) => opt,
+                        Err(message) => return (items, Some(message)),
+                    };
                     match opt.arg {
                         Arg::None => {
                             items.push(Item::Flag {
@@ -135,16 +176,19 @@ impl Parser {
                             });
                         }
                         Arg::Required => {
-                            let rest = &cluster[pos + flag.len_utf8()..];
+                            let rest = &raw_bytes[1 + pos + flag.len_utf8()..];
                             let value = if rest.is_empty() {
                                 if i >= args.len() {
-                                    return Err(format!("option requires an argument -- '{flag}'"));
+                                    return (
+                                        items,
+                                        Some(format!("option requires an argument -- '{flag}'")),
+                                    );
                                 }
-                                let v = args[i].to_string_lossy().into_owned();
+                                let v = args[i].clone();
                                 i += 1;
                                 v
                             } else {
-                                rest.to_string()
+                                os_from_bytes(rest)
                             };
                             items.push(Item::Flag {
                                 long: opt.long,
@@ -153,11 +197,11 @@ impl Parser {
                             break;
                         }
                         Arg::Optional => {
-                            let rest = &cluster[pos + flag.len_utf8()..];
+                            let rest = &raw_bytes[1 + pos + flag.len_utf8()..];
                             let value = if rest.is_empty() {
                                 None
                             } else {
-                                Some(rest.to_string())
+                                Some(os_from_bytes(rest))
                             };
                             items.push(Item::Flag {
                                 long: opt.long,
@@ -171,11 +215,11 @@ impl Parser {
                 if self.mode == Mode::StopAtFirstOperand {
                     operands_only = true;
                 }
-                items.push(Item::Operand(args[i].clone()));
+                items.push(Item::Operand(raw.clone()));
                 i += 1;
             }
         }
-        Ok(items)
+        (items, None)
     }
 
     /// Parse or report the GNU-shaped error and exit: `<program>: <diagnostic>`,
@@ -218,6 +262,12 @@ impl Parser {
             .copied()
             .ok_or_else(|| format!("invalid option -- '{flag}'"))
     }
+}
+
+/// Build an option argument straight from the raw bytes it occupied,
+/// bypassing any UTF-8 conversion that could corrupt a non-UTF-8 value.
+fn os_from_bytes(bytes: &[u8]) -> OsString {
+    OsStr::from_bytes(bytes).to_os_string()
 }
 
 /// Print a diagnostic the way GNU `error()` does, add the "Try" line, exit.
@@ -312,7 +362,7 @@ mod tests {
     fn flag_with(long: &str, value: &str) -> Item {
         Item::Flag {
             long: leak(long),
-            value: Some(value.to_string()),
+            value: Some(OsString::from(value)),
         }
     }
     fn operand(text: &str) -> Item {
@@ -432,6 +482,37 @@ mod tests {
             vec![operand("-a")]
         );
         assert_eq!(parse(Mode::Permute, &["-"]).unwrap(), vec![operand("-")]);
+    }
+
+    #[test]
+    fn parse_partial_keeps_items_seen_before_the_failure() {
+        let owned: Vec<OsString> = ["--all", "--bogus"].iter().map(OsString::from).collect();
+        let (items, error) = Parser::new("t", OPTS, Mode::Permute).parse_partial(&owned);
+        assert_eq!(items, vec![flag("all")]);
+        assert_eq!(error, Some("unrecognized option '--bogus'".to_string()));
+
+        let owned: Vec<OsString> = ["--bogus", "--all"].iter().map(OsString::from).collect();
+        let (items, error) = Parser::new("t", OPTS, Mode::Permute).parse_partial(&owned);
+        assert_eq!(items, vec![]);
+        assert_eq!(error, Some("unrecognized option '--bogus'".to_string()));
+    }
+
+    #[test]
+    fn flag_values_preserve_non_utf8_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        // A lone continuation byte, 0x80, is never valid UTF-8 on its own;
+        // a lossy conversion would corrupt it into the replacement char.
+        let raw = OsStr::from_bytes(b"--kill-after=\x80").to_os_string();
+        let (items, error) = Parser::new("t", OPTS, Mode::Permute).parse_partial(&[raw]);
+        assert_eq!(error, None);
+        match items.as_slice() {
+            [Item::Flag { long, value }] => {
+                assert_eq!(*long, "kill-after");
+                assert_eq!(value.as_deref(), Some(OsStr::from_bytes(b"\x80")));
+            }
+            other => panic!("expected one flag, got {other:?}"),
+        }
     }
 
     #[test]

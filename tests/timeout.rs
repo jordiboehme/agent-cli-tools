@@ -148,6 +148,20 @@ fn help_and_version() {
     assert_eq!(code(&out), 0);
 }
 
+#[test]
+fn help_wins_over_a_later_bad_option() {
+    let out = timeout(&["--help", "--bogus"]);
+    assert_eq!(code(&out), 0);
+    assert!(stdout(&out).starts_with("Usage: timeout"));
+
+    let out = timeout(&["--bogus", "--help"]);
+    assert_eq!(code(&out), 125);
+    assert_eq!(
+        stderr(&out),
+        format!("timeout: unrecognized option '--bogus'\n{TRY}")
+    );
+}
+
 // --- running commands ------------------------------------------------------
 
 #[test]

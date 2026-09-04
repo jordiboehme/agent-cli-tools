@@ -166,14 +166,26 @@ fn parse_args(args: &[OsString]) -> Options {
         timeout: Timeout::Never,
         command: Vec::new(),
     };
-    let items = Parser::new("timeout", TIMEOUT_OPTS, Mode::StopAtFirstOperand)
-        .parse_or_exit(args, EXIT_CANCELED);
+    // parse_partial, not parse_or_exit: an earlier `--help` or `--version`
+    // must act as soon as it is reached, even if a later option on the
+    // same line is invalid, the way GNU getopt itself behaves. Only once
+    // every item is walked does a pending parse error get reported.
+    let (items, error) =
+        Parser::new("timeout", TIMEOUT_OPTS, Mode::StopAtFirstOperand).parse_partial(args);
     let mut operands = Vec::new();
     for item in items {
         match item {
-            Item::Flag { long, value } => apply(&mut opts, long, value.as_deref().unwrap_or("")),
+            Item::Flag { long, value } => {
+                let text = value
+                    .as_deref()
+                    .map_or(String::new(), |v| v.to_string_lossy().into_owned());
+                apply(&mut opts, long, &text);
+            }
             Item::Operand(operand) => operands.push(operand),
         }
+    }
+    if let Some(message) = error {
+        usage_error(&message);
     }
     if operands.len() < 2 {
         try_help();
