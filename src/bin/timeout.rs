@@ -3,6 +3,7 @@
 //! and exit statuses.
 
 use agent_cli_tools::duration::{Timeout, parse_duration};
+use agent_cli_tools::options::{Arg, Item, Mode, Opt, Parser};
 use agent_cli_tools::signals::{parse_signal, signal_name};
 use std::ffi::{CStr, CString, OsString};
 use std::io::Write;
@@ -89,15 +90,43 @@ Part of agent-cli-tools <https://github.com/jordiboehme/agent-cli-tools>
 Compatible with timeout from GNU coreutils 9.11.
 ";
 
-/// Long options and whether each takes an argument.
-const LONG_OPTIONS: &[(&str, bool)] = &[
-    ("foreground", false),
-    ("kill-after", true),
-    ("preserve-status", false),
-    ("signal", true),
-    ("verbose", false),
-    ("help", false),
-    ("version", false),
+/// The options this command recognizes, handed to the shared parser.
+const TIMEOUT_OPTS: &[Opt] = &[
+    Opt {
+        short: Some('f'),
+        long: "foreground",
+        arg: Arg::None,
+    },
+    Opt {
+        short: Some('k'),
+        long: "kill-after",
+        arg: Arg::Required,
+    },
+    Opt {
+        short: Some('p'),
+        long: "preserve-status",
+        arg: Arg::None,
+    },
+    Opt {
+        short: Some('s'),
+        long: "signal",
+        arg: Arg::Required,
+    },
+    Opt {
+        short: Some('v'),
+        long: "verbose",
+        arg: Arg::None,
+    },
+    Opt {
+        short: None,
+        long: "help",
+        arg: Arg::None,
+    },
+    Opt {
+        short: None,
+        long: "version",
+        arg: Arg::None,
+    },
 ];
 
 struct Options {
@@ -119,8 +148,7 @@ fn diagnose(message: &str) {
 
 /// A usage error: the diagnostic, the "Try" line, exit 125.
 fn usage_error(message: &str) -> ! {
-    diagnose(message);
-    try_help()
+    agent_cli_tools::options::usage_error("timeout", message, EXIT_CANCELED)
 }
 
 fn try_help() -> ! {
@@ -138,101 +166,25 @@ fn parse_args(args: &[OsString]) -> Options {
         timeout: Timeout::Never,
         command: Vec::new(),
     };
-    let mut i = 0;
-    while i < args.len() {
-        let arg = args[i].to_string_lossy().into_owned();
-        i += 1;
-        if arg == "--" {
-            break;
-        }
-        if let Some(long) = arg.strip_prefix("--") {
-            let (name, inline_value) = match long.split_once('=') {
-                Some((n, v)) => (n, Some(v.to_string())),
-                None => (long, None),
-            };
-            let (full, takes_arg) = resolve_long(name, &arg);
-            let value = if takes_arg {
-                match inline_value {
-                    Some(v) => v,
-                    None => {
-                        if i >= args.len() {
-                            usage_error(&format!("option '--{full}' requires an argument"));
-                        }
-                        i += 1;
-                        args[i - 1].to_string_lossy().into_owned()
-                    }
-                }
-            } else {
-                if inline_value.is_some() {
-                    usage_error(&format!("option '--{full}' doesn't allow an argument"));
-                }
-                String::new()
-            };
-            apply(&mut opts, full, &value);
-        } else if arg.len() > 1 && arg.starts_with('-') {
-            let cluster = &arg[1..];
-            for (pos, flag) in cluster.char_indices() {
-                let name = match flag {
-                    'f' => "foreground",
-                    'p' => "preserve-status",
-                    'v' => "verbose",
-                    'k' => "kill-after",
-                    's' => "signal",
-                    other => usage_error(&format!("invalid option -- '{other}'")),
-                };
-                if flag == 'k' || flag == 's' {
-                    let rest = &cluster[pos + flag.len_utf8()..];
-                    let value = if rest.is_empty() {
-                        if i >= args.len() {
-                            usage_error(&format!("option requires an argument -- '{flag}'"));
-                        }
-                        i += 1;
-                        args[i - 1].to_string_lossy().into_owned()
-                    } else {
-                        rest.to_string()
-                    };
-                    apply(&mut opts, name, &value);
-                    break;
-                }
-                apply(&mut opts, name, "");
-            }
-        } else {
-            i -= 1;
-            break;
+    let items = Parser::new("timeout", TIMEOUT_OPTS, Mode::StopAtFirstOperand)
+        .parse_or_exit(args, EXIT_CANCELED);
+    let mut operands = Vec::new();
+    for item in items {
+        match item {
+            Item::Flag { long, value } => apply(&mut opts, long, value.as_deref().unwrap_or("")),
+            Item::Operand(operand) => operands.push(operand),
         }
     }
-    let operands = &args[i..];
     if operands.len() < 2 {
         try_help();
     }
-    let duration = operands[0].to_string_lossy();
+    let mut operands = operands.into_iter();
+    let duration_arg = operands.next().expect("checked len above");
+    let duration = duration_arg.to_string_lossy();
     opts.timeout = parse_duration(&duration)
         .unwrap_or_else(|| usage_error(&format!("invalid time interval '{duration}'")));
-    opts.command = operands[1..].to_vec();
+    opts.command = operands.collect();
     opts
-}
-
-/// Resolve a long option by exact name or unambiguous prefix, the way
-/// getopt_long does, with its exact diagnostics.
-fn resolve_long(name: &str, arg: &str) -> (&'static str, bool) {
-    let candidates: Vec<&(&str, bool)> = LONG_OPTIONS
-        .iter()
-        .filter(|(n, _)| n.starts_with(name))
-        .collect();
-    if let Some(exact) = candidates.iter().find(|(n, _)| *n == name) {
-        return **exact;
-    }
-    match candidates.as_slice() {
-        [] => usage_error(&format!("unrecognized option '{arg}'")),
-        [one] => **one,
-        many => {
-            let list: Vec<String> = many.iter().map(|(n, _)| format!("'--{n}'")).collect();
-            usage_error(&format!(
-                "option '--{name}' is ambiguous; possibilities: {}",
-                list.join(" ")
-            ))
-        }
-    }
 }
 
 fn apply(opts: &mut Options, name: &str, value: &str) {

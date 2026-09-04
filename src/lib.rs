@@ -1,6 +1,7 @@
 //! Shared building blocks for the agent-cli-tools commands.
 
 pub mod duration;
+pub mod options;
 pub mod signals;
 
 /// The `--version` text every command prints: the GNU shape, naming this
