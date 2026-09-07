@@ -151,6 +151,15 @@ impl Sleeper {
         // longer being this test binary's. No program a test spawns
         // shares that name.
         let before = comm_of(std::process::id() as i32);
+        // The program may start a child of its own, and until that child
+        // reaches its exec the table shows it under this program's
+        // executable with no arguments the kernel will hand out. pidof
+        // lists it by that executable, the way Linux lists a child by the
+        // arguments it copied, so a test that counts pids must wait for
+        // it to move on. The kernel names the resolved image.
+        let image = std::fs::canonicalize(program)
+            .map(|path| path.to_string_lossy().into_owned())
+            .ok();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let gone = self.child.try_wait().expect("check on the sleeper");
@@ -159,10 +168,16 @@ impl Sleeper {
                 "the sleeper {} died at once: {gone:?}",
                 program.display()
             );
-            if let Some(process) = proc::all().into_iter().find(|p| p.pid == self.pid()) {
+            let table = proc::all();
+            if let Some(process) = table.iter().find(|p| p.pid == self.pid()) {
                 let named = process.comm != before;
-                let has_arguments = process.argv.is_some_and(|argv| !argv.is_empty());
-                if named && has_arguments {
+                let has_arguments = process.argv.as_ref().is_some_and(|argv| !argv.is_empty());
+                let child_in_flight = table.iter().any(|p| {
+                    p.pid != self.pid()
+                        && p.exe == image
+                        && (p.argv.is_none() || p.pid > self.pid())
+                });
+                if named && has_arguments && !child_in_flight {
                     return;
                 }
             }
