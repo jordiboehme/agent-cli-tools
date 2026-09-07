@@ -16,12 +16,22 @@ use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_pidof");
 
-/// The stand-in for `sleep` wherever a test needs a program running under
-/// a name of its own: this crate's `timeout`, waiting out a long timeout.
+/// The program a test copies under a name of its own: this crate's `tac`,
+/// reading a standard input the test holds open and never writes to, so
+/// it waits without ever forking. A program that forks, `timeout` say,
+/// has a child that until its exec carries the program's executable
+/// with no arguments the kernel will hand out, and pidof lists it by
+/// that executable, the way Linux lists a child by the arguments it
+/// copied; a test counting exact pids would see it come and go.
 /// A copy of a macOS system binary cannot serve, because a launch
 /// constraint kills a copy of one with SIGKILL the moment it execs; a
 /// binary this project built carries no such constraint.
-const SLEEPER: &str = env!("CARGO_BIN_EXE_timeout");
+const SLEEPER: &str = env!("CARGO_BIN_EXE_tac");
+
+/// The arguments a copied sleeper is given: read standard input, which
+/// is the pipe the test keeps open, so the process sits until it is killed
+/// or the test that owns the pipe is gone.
+const SLEEPER_ARGS: &[&str] = &["-"];
 
 /// How long a spawned process waits before giving up on its own. Long
 /// enough that no test outruns it, short enough that one left behind by
@@ -125,8 +135,10 @@ impl Sleeper {
         // whatever the process started as well: a script leaves a
         // `sleep` of its own behind.
         command.process_group(0);
+        // The pipe behind standard input is what a copied sleeper waits
+        // on; it stays open for as long as this value lives.
         let child = command
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -151,15 +163,6 @@ impl Sleeper {
         // longer being this test binary's. No program a test spawns
         // shares that name.
         let before = comm_of(std::process::id() as i32);
-        // The program may start a child of its own, and until that child
-        // reaches its exec the table shows it under this program's
-        // executable with no arguments the kernel will hand out. pidof
-        // lists it by that executable, the way Linux lists a child by the
-        // arguments it copied, so a test that counts pids must wait for
-        // it to move on. The kernel names the resolved image.
-        let image = std::fs::canonicalize(program)
-            .map(|path| path.to_string_lossy().into_owned())
-            .ok();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let gone = self.child.try_wait().expect("check on the sleeper");
@@ -168,16 +171,10 @@ impl Sleeper {
                 "the sleeper {} died at once: {gone:?}",
                 program.display()
             );
-            let table = proc::all();
-            if let Some(process) = table.iter().find(|p| p.pid == self.pid()) {
+            if let Some(process) = proc::all().into_iter().find(|p| p.pid == self.pid()) {
                 let named = process.comm != before;
-                let has_arguments = process.argv.as_ref().is_some_and(|argv| !argv.is_empty());
-                let child_in_flight = table.iter().any(|p| {
-                    p.pid != self.pid()
-                        && p.exe == image
-                        && (p.argv.is_none() || p.pid > self.pid())
-                });
-                if named && has_arguments && !child_in_flight {
+                let has_arguments = process.argv.is_some_and(|argv| !argv.is_empty());
+                if named && has_arguments {
                     return;
                 }
             }
@@ -197,7 +194,7 @@ impl Sleeper {
 
     /// A copy of the sleeper program, run through the path given.
     fn program(path: &Path) -> Self {
-        Self::spawn(path, &[LIFETIME, "/bin/sleep", LIFETIME], None)
+        Self::spawn(path, SLEEPER_ARGS, None)
     }
 
     fn pid(&self) -> i32 {
@@ -603,7 +600,7 @@ fn a_name_the_kernel_cut_short_matches_only_where_that_name_is_used() {
     let program = workspace.program(&long);
     let plain = Sleeper::program(&program);
     let title = "a rewritten title";
-    let titled = Sleeper::spawn(&program, &[LIFETIME, "/bin/sleep", LIFETIME], Some(title));
+    let titled = Sleeper::spawn(&program, SLEEPER_ARGS, Some(title));
     let short = comm_of(plain.pid());
     assert!(short.len() < long.len(), "{long:?} was kept whole");
 
@@ -633,11 +630,7 @@ fn a_login_shells_leading_dash_is_not_part_of_the_name() {
     // A name that is neither the program's file name nor its path, so
     // only argv[0] can match it.
     let name = unique("login");
-    let running = Sleeper::spawn(
-        &program,
-        &[LIFETIME, "/bin/sleep", LIFETIME],
-        Some(&format!("-{name}")),
-    );
+    let running = Sleeper::spawn(&program, SLEEPER_ARGS, Some(&format!("-{name}")));
 
     assert_eq!(stdout(&run(&[&name])), format!("{}\n", running.pid()));
     // The dash is dropped from the process, not from the argument, so
