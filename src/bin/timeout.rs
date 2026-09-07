@@ -541,6 +541,20 @@ fn run(opts: &Options) -> i32 {
 }
 
 fn main() {
+    // The Rust runtime ignores SIGPIPE, and an ignored signal survives
+    // exec: without this every command run under timeout would start
+    // with SIGPIPE ignored, so `yes | head -1` would report a write
+    // error instead of dying quietly. GNU starts at SIG_DFL, installs a
+    // caught handler over it, and exec puts a caught handler back to
+    // SIG_DFL, so its command always sees the default. Restoring it
+    // here also lets `install(SIGPIPE, false)` below see SIG_DFL and
+    // forward the signal, which it will not do for an ignored one.
+    // SAFETY: setting a disposition to SIG_DFL is always valid, and this
+    // runs before any output, thread or handler exists.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let opts = parse_args(&args);
     process::exit(run(&opts));

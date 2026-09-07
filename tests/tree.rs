@@ -7,6 +7,7 @@
 //! output for the cases listed there.
 
 use std::fs;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -50,6 +51,28 @@ impl Demo {
         Demo { dir }
     }
 
+    /// The same fixture plus the entries a listing has to cope with and
+    /// the plain one has none of: a symlink to a directory, a symlink
+    /// to nothing, a directory that cannot be opened, and a name with a
+    /// space in it. Kept out of `new` so the hand-written expectations
+    /// everywhere else stay what they are; the differential test below
+    /// is what wants the awkward entries.
+    fn awkward(tag: &str) -> Demo {
+        let demo = Demo::new(tag);
+        let root = demo.path();
+        for sub in ["d1", "empty", "locked"] {
+            fs::create_dir_all(root.join(sub)).expect("create fixture directory");
+        }
+        for file in ["d1/a.txt", "a file.txt"] {
+            fs::write(root.join(file), "").expect("write fixture file");
+        }
+        symlink("d1", root.join("link")).expect("link fixture directory");
+        symlink("nowhere", root.join("dangling")).expect("link fixture nothing");
+        fs::set_permissions(root.join("locked"), fs::Permissions::from_mode(0o000))
+            .expect("lock fixture directory");
+        demo
+    }
+
     fn path(&self) -> PathBuf {
         self.dir.join("demo")
     }
@@ -57,6 +80,14 @@ impl Demo {
 
 impl Drop for Demo {
     fn drop(&mut self) {
+        // A directory with no permission bits at all cannot be walked,
+        // so it cannot be removed either: give them back before the
+        // fixture goes. Only `awkward` makes one, and every fixture is
+        // torn down here.
+        let locked = self.path().join("locked");
+        if locked.is_dir() {
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).ok();
+        }
         fs::remove_dir_all(&self.dir).ok();
     }
 }
@@ -994,6 +1025,61 @@ fn help_and_version() {
     assert!(stdout(&out).contains(ISSUES.trim_end_matches("/issues")));
 }
 
+/// An option argument is never read as an option name, however it is
+/// spelled: `-P '--bogus'` is a pattern that matches nothing, not the
+/// invalid-argument error `--bogus` on its own is.
+#[test]
+fn an_option_argument_is_never_a_long_option() {
+    let demo = Demo::new("optarg");
+    let out = agrees_with_oracle(&demo, &["-P", "--bogus"]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(stderr(&out), "");
+    assert_eq!(
+        stdout(&out),
+        format!(
+            ".\n\
+             {TEE}docs\n\
+             {TEE}node_modules\n\
+             {BAR}{END}pkg\n\
+             {END}src\n\
+             \n5 directories, 0 files\n"
+        )
+    );
+
+    // The same token given as an operand, and as an option name.
+    let out = agrees_with_oracle(&demo, &["--", "--bogus"]);
+    assert_eq!(code(&out), 2);
+    assert_eq!(
+        stdout(&out),
+        "--bogus  [error opening dir]\n\n0 directories, 0 files\n"
+    );
+    let out = run(&demo, &["--bogus"]);
+    assert_eq!(code(&out), 1);
+    assert!(
+        stderr(&out).starts_with("tree: Invalid argument `--bogus'.\n"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// Upstream follows `link` with -l and lists what is under it; this
+/// build refuses the option, so -l cannot be one of the byte-identical
+/// cases below. Assert the refusal over the awkward fixture instead.
+#[test]
+fn follow_links_is_refused_where_there_are_links() {
+    let demo = Demo::awkward("followlinks");
+    let out = run(&demo, &["-l"]);
+    assert_eq!(code(&out), 1);
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        stderr(&out),
+        format!(
+            "tree: -l is not implemented in this build\n\
+             See {ISSUES} to request it\n"
+        )
+    );
+}
+
 /// The differential test: the same fixture, the same environment, the
 /// same arguments, given to a real tree 2.3.2 and to this one. Skipped
 /// unless AGENT_CLI_TOOLS_TREE_ORACLE names an executable, so the suite
@@ -1010,7 +1096,7 @@ fn matches_the_real_tree() {
         oracle.display()
     );
 
-    let demo = Demo::new("oracle");
+    let demo = Demo::awkward("oracle");
     let dir = demo.path();
     let cases: &[&[&str]] = &[
         &[],
@@ -1025,8 +1111,29 @@ fn matches_the_real_tree() {
         &["--charset", "ascii"],
         &["-P", "*.rs"],
         &["-P", "*.rs", "--prune"],
-        &["-J"],
         &["-L", "2", "-a"],
+        // The awkward entries: a pattern has to filter a symlink to a
+        // directory, which is never descended here, and keep it when
+        // the pattern asks for directories by a trailing slash.
+        &["-P", "empty/"],
+        &["-P", "link/"],
+        &["-P", "broken"],
+        &["-P", "*.RS", "--ignore-case"],
+        &["-P", "*.rs", "--matchdirs", "-I", "locked"],
+        &["--matchdirs", "-P", "d1", "-I", "locked"],
+        &["-d", "-P", "zzz"],
+        &["-I", "link"],
+        &["-I", "link/"],
+        // An option argument is never an option, however it is spelled.
+        &["-P", "--bogus"],
+        // -I locked on the two cases above and here: an unreadable
+        // directory takes upstream down two paths this build does not
+        // follow, and both are unrelated to what the case is for. With
+        // --matchdirs upstream reports "error opening dir" and still
+        // exits 0, where every other run exits 2; in JSON its printer
+        // gives every later file a `"contents":[    ]` of its own. The
+        // other cases here do walk the unreadable directory.
+        &["-J", "-I", "locked"],
     ];
     for case in cases {
         let mine = run_in(&dir, case);

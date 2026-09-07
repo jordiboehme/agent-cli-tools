@@ -115,6 +115,8 @@ The terminal's size comes from `TIOCGWINSZ` on standard input, with `LINES` and 
 - **The `s` key does nothing**, since screenshots come with `-s`, which is not implemented.
 - **An exec failure is reported by the parent.** Upstream's child writes `command: message` into the pipe and exits 127; this port never gets as far as a child, and writes the same line into the same place itself. The status is 127 either way, and it only reaches the exit status through `-e`.
 - **The shell is macOS's `/bin/sh`**, so a command that fails to parse or is not found is reported in its words rather than dash's.
+- **A line cut short by `-w` still changes the colours.** The part of the line past the screen width is not drawn, but the escape sequences in it are still read, so an attribute the discarded tail sets is in force on the next line. Upstream skips to the end of the line without looking at what it skips, so its next line can differ the other way, keeping an attribute this port has already dropped.
+- **An empty field inside an SGR sequence ends it.** `ESC[;1m` sets nothing here, where upstream reads the empty field as a `0` and resets. A sequence that is empty altogether, `ESC[m`, is the reset it is upstream.
 
 Smaller ones: `--version` names this project instead of procps-ng, the help footer points here, and diagnostics always use ASCII quotes.
 

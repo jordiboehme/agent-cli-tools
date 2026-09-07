@@ -986,8 +986,13 @@ fn walk(entry: &mut Entry, depth: i64, matched: bool, o: &Options, failed: &mut 
         {
             continue;
         }
-        if !matched && !o.include.is_empty() && !kid.is_dir {
-            let hit = matches_any(&o.include, kid.path.as_bytes(), false, o.ignore_case);
+        // A -P pattern is skipped only for a directory this build will
+        // descend, since whatever matches will be found under it. A
+        // symlink to a directory is never descended, so it has to match
+        // like any other entry, as a directory: `-P 'link/'` keeps it.
+        let descendable = kid.is_dir && kid.kind != Kind::Link;
+        if !matched && !o.include.is_empty() && !descendable {
+            let hit = matches_any(&o.include, kid.path.as_bytes(), kid.is_dir, o.ignore_case);
             if !hit {
                 continue;
             }
@@ -1613,24 +1618,53 @@ fn use_instead(template: &str, operands: &[OsString]) -> String {
 /// parser also accepts an unambiguous prefix. Rejecting an inexact name
 /// here keeps `tree --nore` the error it is upstream, and means the
 /// parser's ambiguity diagnostic can never be reached.
+///
+/// Only the tokens the parser will read as options are looked at: an
+/// option argument is whatever it says it is, so `-P '--bogus'` is a
+/// pattern upstream and has to stay one here.
 fn reject_inexact_long_options(args: &[OsString]) {
-    for arg in args {
-        let text = arg.to_string_lossy();
+    let mut at = 0;
+    while at < args.len() {
+        let text = args[at].to_string_lossy();
+        at += 1;
+        // Everything behind `--` is an operand, dashes and all.
         if text == "--" {
             return;
         }
-        let Some(rest) = text.strip_prefix("--") else {
+        if let Some(rest) = text.strip_prefix("--") {
+            let name = rest.split('=').next().unwrap_or(rest);
+            let known = TREE_OPTS.iter().find(|opt| opt.long == name);
+            // An `=` on an option that takes nothing is not a GNU-style
+            // complaint upstream, it is the same invalid-argument error
+            // as an option that does not exist.
+            let allowed = known.is_some_and(|opt| opt.arg != Arg::None || name == rest);
+            if !allowed {
+                fail(&format!("Invalid argument `{text}'."), true);
+            }
+            // An argument not written with `=` is the next token, which
+            // is then the option's, not this scan's.
+            if known.is_some_and(|opt| opt.arg == Arg::Required) && name == rest {
+                at += 1;
+            }
             continue;
-        };
-        let name = rest.split('=').next().unwrap_or(rest);
-        let known = TREE_OPTS.iter().find(|opt| opt.long == name);
-        // An `=` on an option that takes nothing is not a GNU-style
-        // complaint upstream, it is the same invalid-argument error as
-        // an option that does not exist.
-        let allowed = known.is_some_and(|opt| opt.arg != Arg::None || name == rest);
-        if !allowed {
-            fail(&format!("Invalid argument `{text}'."), true);
         }
+        if text.len() > 1 && text.starts_with('-') {
+            // The first letter in the cluster that takes an argument
+            // takes the rest of the token, or the token after it.
+            for (pos, flag) in text[1..].char_indices() {
+                let Some(opt) = TREE_OPTS.iter().find(|opt| opt.short == Some(flag)) else {
+                    // An unknown letter is the parser's to report.
+                    break;
+                };
+                if opt.arg == Arg::Required {
+                    if text[1 + pos + flag.len_utf8()..].is_empty() {
+                        at += 1;
+                    }
+                    break;
+                }
+            }
+        }
+        // Anything else is an operand and is not an option name.
     }
 }
 

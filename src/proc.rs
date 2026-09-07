@@ -166,8 +166,13 @@ fn process_table() -> Vec<u8> {
         if rc != 0 || size == 0 {
             return Vec::new();
         }
-        let mut buffer = vec![0u8; size];
-        let mut written = size;
+        // An eighth more than the kernel asked for, the way ps(1) does
+        // it: a burst of new processes between the sizing and the fetch
+        // would otherwise make the fetch fail, and this loop only gets
+        // one more try at it.
+        let room = size + size / 8;
+        let mut buffer = vec![0u8; room];
+        let mut written = room;
         // SAFETY: the buffer holds `written` bytes, which is what sysctl is
         // told it may fill; on return `written` is what it actually filled.
         let rc = unsafe {
@@ -268,7 +273,10 @@ fn argv_of(pid: i32, buffer: &mut [u8]) -> Option<Vec<String>> {
         at += 1;
     }
 
-    let mut argv = Vec::with_capacity(argc as usize);
+    // The count comes from the kernel's own buffer, so it is trusted no
+    // further than the buffer can hold: one argument is at least a NUL,
+    // so there can never be more of them than there are bytes left.
+    let mut argv = Vec::with_capacity((argc as usize).min(blob.len()));
     for _ in 0..argc {
         if at >= blob.len() {
             break;

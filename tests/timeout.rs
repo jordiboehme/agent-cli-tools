@@ -371,6 +371,23 @@ fn forwarded_signal_caught_by_the_command_yields_its_exit_status() {
     assert_eq!(status.code(), Some(9));
 }
 
+/// The command starts with SIGPIPE at its default disposition, as it
+/// does under GNU timeout: a writer whose reader has gone dies quietly
+/// instead of reporting a write error.
+#[test]
+fn the_command_starts_with_sigpipe_at_its_default() {
+    let out = timeout(&["5", "sh", "-c", "yes | head -1"]);
+    assert_eq!(stderr(&out), "");
+    assert_eq!(code(&out), 0);
+    assert_eq!(stdout(&out), "y\n");
+
+    // And the disposition itself: a command that raises SIGPIPE on
+    // itself dies of it, which timeout re-raises, so the status here is
+    // signal 13 rather than an exit code.
+    let out = timeout(&["5", "sh", "-c", "kill -s PIPE $$"]);
+    assert_eq!(out.status.signal(), Some(libc::SIGPIPE));
+}
+
 fn alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
