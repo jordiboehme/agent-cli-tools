@@ -152,10 +152,13 @@ impl Regex {
             .position(|&b| b == 0)
             .unwrap_or(pattern.len());
         let text = CString::new(to_posix_ere(&pattern[..end])).expect("NUL already trimmed");
-        // SAFETY: regcomp initializes every field it needs; zeroed memory
-        // is the usual starting point, and the pattern pointer stays valid
-        // for the whole call.
+        // SAFETY: regex_t is a plain struct of integers and pointers with
+        // no validity requirement of its own, and regcomp overwrites every
+        // field it uses before anything reads one.
         let mut compiled: libc::regex_t = unsafe { std::mem::zeroed() };
+        // SAFETY: `compiled` is a live regex_t this call owns for its whole
+        // duration, and `text` outlives the call, so the pattern pointer
+        // stays valid throughout it.
         let code = unsafe {
             libc::regcomp(
                 &mut compiled,
@@ -170,42 +173,45 @@ impl Regex {
     }
 
     /// The match with the greatest start position strictly before `limit`,
-    /// searching only `data[..limit]`, as `(start, length)`.
+    /// searching only `region[..limit]`, as `(start, length)`.
     ///
     /// GNU calls `re_search` with a negative range, which walks candidate
     /// start positions downward; `regexec` has no such mode, so the walk
     /// is explicit here and a candidate is accepted only when the match it
     /// finds begins at that very position. A match reported further right
-    /// belongs to a candidate the walk already passed. This is quadratic
-    /// in the worst case, which is acceptable for a first port: the walk
-    /// resumes where the previous search stopped, so the number of
-    /// `regexec` calls over a whole file stays linear, but each call scans
-    /// the rest of the region.
-    fn search_back(&self, data: &[u8], limit: usize) -> Option<(usize, usize)> {
+    /// belongs to a candidate the walk already passed.
+    ///
+    /// `region` is the operand's data with one extra byte on the end, and
+    /// it is borrowed mutably because the terminator has to move: regexec
+    /// reads a C string, and REG_NEWLINE anchoring is only right when that
+    /// string ends exactly where the search region does. Writing a 0 at
+    /// `limit` and putting back the byte it displaced costs the same for
+    /// any input size; copying the region per search instead made the run
+    /// quadratic in bytes copied, since there is one search per match.
+    fn search_back(&self, region: &mut [u8], limit: usize) -> Option<(usize, usize)> {
         if limit == 0 {
             return None;
         }
-        // regexec needs a NUL-terminated string that ends exactly where
-        // the search region ends, since REG_NEWLINE anchoring depends on
-        // it. One copy per search serves every candidate: the C string for
-        // a candidate is just a pointer into it.
-        let mut region = Vec::with_capacity(limit + 1);
-        region.extend_from_slice(&data[..limit]);
-        region.push(0);
+        let displaced = region[limit];
+        region[limit] = 0;
 
+        let mut result = None;
         let mut start = limit - 1;
         loop {
             // REG_NOTBOL keeps '^' from matching at a candidate that is
             // not really the start of a line in the original data.
-            let eflags = if start > 0 && data[start - 1] != b'\n' {
+            let eflags = if start > 0 && region[start - 1] != b'\n' {
                 libc::REG_NOTBOL
             } else {
                 0
             };
+            // SAFETY: regmatch_t is two plain integers, so an all-zero
+            // value is a valid one; regexec overwrites both before they
+            // are read.
             let mut found: libc::regmatch_t = unsafe { std::mem::zeroed() };
-            // SAFETY: `region` is NUL-terminated and `start < limit`, so
-            // the offset pointer is inside it and names a valid C string;
-            // `found` is one regmatch_t and nmatch says so.
+            // SAFETY: `region[limit]` is 0 and `start < limit`, so the
+            // offset pointer is inside `region` and names a valid C
+            // string; `found` is one regmatch_t and nmatch says so.
             let code = unsafe {
                 libc::regexec(
                     &self.compiled,
@@ -216,13 +222,17 @@ impl Regex {
                 )
             };
             if code == 0 && found.rm_so == 0 {
-                return Some((start, found.rm_eo as usize));
+                result = Some((start, found.rm_eo as usize));
+                break;
             }
             if start == 0 {
-                return None;
+                break;
             }
             start -= 1;
         }
+
+        region[limit] = displaced;
+        result
     }
 }
 
@@ -291,13 +301,20 @@ fn reverse(
             }
         }
         Separator::Regex(regex) => {
+            // One scratch copy per operand, with room for the terminator
+            // each search moves to its own limit. Records are still read
+            // out of `data`, which nothing here disturbs.
+            let mut region = Vec::with_capacity(data.len() + 1);
+            region.extend_from_slice(data);
+            region.push(0);
+
             // The next search never starts at the previous match's own
             // start, so an empty match can never be found twice, and it
             // never looks past that start either, which is what keeps a
             // greedy separator from swallowing the record before it.
             let mut limit = data.len();
             while limit > 0 {
-                let Some((start, length)) = regex.search_back(data, limit) else {
+                let Some((start, length)) = regex.search_back(&mut region, limit) else {
                     break;
                 };
                 let boundary = if before { start } else { start + length };
