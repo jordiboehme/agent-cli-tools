@@ -73,6 +73,16 @@ fn hostname() -> String {
         .into_owned()
 }
 
+/// A terminal wide enough to show the header whatever the host is called.
+/// The right half of the header is the host name and the time, and the
+/// whole header goes away once it does not fit, as upstream's does. A
+/// developer's Mac has a short name; a CI runner's can be longer than
+/// the whole of an 80-column line, so the tests that read the header
+/// give it the usual 80 columns on top of the name.
+fn header_cols() -> u16 {
+    u16::try_from(80 + hostname().chars().count()).expect("a sane host name")
+}
+
 /// One watch process, the terminal it was given, and everything read
 /// from that terminal so far.
 struct Run {
@@ -371,7 +381,7 @@ fn stderr_of(output: &Output) -> String {
 
 #[test]
 fn the_header_shows_interval_command_and_host() {
-    let mut run = Run::new(&["-n", "0.5", "echo", "hi"], 24, 80);
+    let mut run = Run::new(&["-n", "0.5", "echo", "hi"], 24, header_cols());
     let host = hostname();
     let screen = run.wait_for("the first frame", |screen| {
         screen[0].starts_with("Every 0.5s: echo hi") && screen[2].trim() == "hi"
@@ -408,7 +418,7 @@ fn a_long_command_is_trimmed_to_what_the_header_has_room_for() {
     // read off the frame rather than assumed.
     let command = format!("echo {}", "a".repeat(200));
     let host = hostname();
-    let mut run = Run::new(&["-n", "2", &command], 24, 80);
+    let mut run = Run::new(&["-n", "2", &command], 24, header_cols());
     let marker = format!("{host}: ");
     let screen = run.wait_for("a header with the host", |screen| {
         screen[0].contains(&marker)
@@ -449,17 +459,17 @@ fn a_bad_interval_is_reported_before_the_terminal_is_touched() {
 
 #[test]
 fn an_interval_takes_a_comma_radix_and_is_clamped_in_silence() {
-    let mut comma = Run::new(&["-n", "1,5", "echo", "hi"], 24, 80);
+    let mut comma = Run::new(&["-n", "1,5", "echo", "hi"], 24, header_cols());
     comma.wait_for("a comma radix read as a decimal point", |screen| {
         screen[0].starts_with("Every 1.5s: echo hi")
     });
 
-    let mut zero = Run::new(&["-n", "0", "echo", "hi"], 24, 80);
+    let mut zero = Run::new(&["-n", "0", "echo", "hi"], 24, header_cols());
     zero.wait_for("an interval clamped up to the minimum", |screen| {
         screen[0].starts_with("Every 0.1s: echo hi")
     });
 
-    let mut huge = Run::new(&["-n", "99999999", "echo", "hi"], 24, 80);
+    let mut huge = Run::new(&["-n", "99999999", "echo", "hi"], 24, header_cols());
     huge.wait_for("an interval clamped down to the maximum", |screen| {
         screen[0].starts_with("Every 2678400.0s: echo hi")
     });
@@ -467,7 +477,12 @@ fn an_interval_takes_a_comma_radix_and_is_clamped_in_silence() {
 
 #[test]
 fn watch_interval_sets_the_default_and_loses_to_an_option() {
-    let mut from_env = Run::with_env(&["echo", "hi"], 24, 80, &[("WATCH_INTERVAL", "0.5")]);
+    let mut from_env = Run::with_env(
+        &["echo", "hi"],
+        24,
+        header_cols(),
+        &[("WATCH_INTERVAL", "0.5")],
+    );
     from_env.wait_for("the interval from the environment", |screen| {
         screen[0].starts_with("Every 0.5s: echo hi")
     });
@@ -475,7 +490,7 @@ fn watch_interval_sets_the_default_and_loses_to_an_option() {
     let mut overridden = Run::with_env(
         &["-n", "1.5", "echo", "hi"],
         24,
-        80,
+        header_cols(),
         &[("WATCH_INTERVAL", "0.5")],
     );
     overridden.wait_for("the interval from the command line", |screen| {
@@ -756,7 +771,7 @@ fn usage_errors_and_unsupported_options() {
 
 #[test]
 fn flags_after_the_command_belong_to_the_command() {
-    let mut run = Run::new(&["-n", "0.2", "echo", "-t"], 24, 80);
+    let mut run = Run::new(&["-n", "0.2", "echo", "-t"], 24, header_cols());
     let screen = run.wait_for("the command's own flag", |screen| screen[2].trim() == "-t");
     assert!(
         screen[0].starts_with("Every 0.2s: echo -t"),
