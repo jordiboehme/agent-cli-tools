@@ -160,6 +160,15 @@ fn env_omp(name: &str) -> u64 {
 }
 
 fn main() {
+    // The Rust runtime ignores SIGPIPE, which would turn `nproc | head -c1`
+    // into a write error instead of the silent death by signal that GNU
+    // nproc and every other filter in a pipeline produce.
+    // SAFETY: setting a disposition to SIG_DFL is always valid, and this
+    // runs before any output, thread or handler exists.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
 
     let mut all = false;

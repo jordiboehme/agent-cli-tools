@@ -12,7 +12,7 @@ env:
   CARGO_TERM_COLOR: always
   # Every binary the package builds, space separated. Adding a command means
   # adding its name here and a bin.install line in the formula below.
-  BINARIES: timeout
+  BINARIES: timeout nproc tac pidof watch tree
 
 jobs:
   build:
@@ -80,6 +80,11 @@ jobs:
           done
           target/${{ matrix.target }}/release/timeout 5 true
           target/${{ matrix.target }}/release/timeout 0.2 sleep 5 && exit 1 || [ $? -eq 124 ]
+          test "$(target/${{ matrix.target }}/release/nproc --ignore=99999)" = "1"
+          printf 'a\nb\n' | target/${{ matrix.target }}/release/tac | head -1 | grep -qx b
+          target/${{ matrix.target }}/release/pidof -w launchd | grep -qx 1
+          target/${{ matrix.target }}/release/tree --version > /dev/null
+          target/${{ matrix.target }}/release/watch --help > /dev/null
 
       # Sign each bare Mach-O with a Developer ID Application certificate
       # under the hardened runtime, then notarize with notarytool. A bare
@@ -329,12 +334,14 @@ jobs:
             end
 
             def install
-              bin.install "timeout"
+              bin.install "timeout", "nproc", "tac", "pidof", "watch", "tree"
             end
 
             test do
               assert_match version.to_s, shell_output("#{bin}/timeout --version")
               shell_output("#{bin}/timeout 0.1 sleep 5", 124)
+              assert_match(/\A\d+\Z/, shell_output("#{bin}/nproc").strip)
+              assert_equal "b\na\n", pipe_output("#{bin}/tac", "a\nb\n")
             end
           end
           FORMULA
