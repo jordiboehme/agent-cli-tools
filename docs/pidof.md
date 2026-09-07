@@ -14,7 +14,7 @@ Each PROGRAM is a command name, a file name, or a path. Every matching process i
 | `-c`, `--check-root` | Accepted and ignored. See macOS notes. |
 | `-q` | Quiet mode: print nothing at all, only set the exit status. Implies `-s`. |
 | `-w`, `--with-workers` | Also consider processes whose arguments could not be read. See macOS notes. |
-| `-x` | Also find shells running the named script. |
+| `-x` | Also find shells running the named script, whether it was started directly or handed to an interpreter. |
 | `-o`, `--omit-pid PID,...` | Omit these processes. Repeatable. |
 | `-t`, `--lightweight` | Accepted and ignored. See macOS notes. |
 | `-S`, `--separator SEP` | Put SEP between the pids instead of a single space. |
@@ -43,7 +43,7 @@ There is no rule that a program argument containing a slash means "this path and
 
 Rules 5 and 6 use the path the kernel reports, which has every symbolic link resolved. A program started through a link is therefore found under the link's name, from `argv[0]`, and under the name of the file it points at, from the executable path.
 
-If none of the six matched and `-x` was given and the process has an `argv[1]`, the same first three tests are applied to `argv[1]`, guarded by a check that the process's short name is a prefix of `argv[1]`'s base name. That guard is what upstream uses to tell a script run directly from an interpreter that was invoked by hand; on macOS it behaves differently, see the macOS notes.
+If none of the six matched and `-x` was given and the process has an `argv[1]`, the same first three tests are applied to `argv[1]`, which is the script an interpreter was handed. Upstream guards that with a check on the process's short name, which this port leaves out because on macOS it would make `-x` useless; the macOS notes and the differences below say what that changes.
 
 Finally, if nothing matched and `argv[0]` contains a space, the process has most likely rewritten its own command line, and the argument is compared against the kernel's short name instead.
 
@@ -86,11 +86,13 @@ That is what `-w` means here. macOS has no kernel worker threads for it to revea
 
 `-t` is accepted and ignored. macOS threads are not addressable as process ids, so there are no thread ids to add to the output and `-t` prints the same process ids as a run without it.
 
-The kernel's short name for a process is the base name of the file it executed, kept to 16 characters. Two consequences: a program whose file name is longer is known to `-w` only by that cut-down name, and a script run directly is named after its interpreter, where Linux would name it after the script. The `-x` guard, which requires that short name to be a prefix of `argv[1]`'s base name, therefore behaves differently here. It admits a script only when the script's file name starts with the interpreter's name, and it cannot tell `./deploy.sh` from `sh deploy.sh`, because both leave `sh` running with the same arguments. In practice `-x` finds fewer scripts on macOS than on Linux, and the ones it finds it finds in both forms.
+The kernel's short name for a process is the base name of the file it executed, kept to 16 characters. Two consequences: a program whose file name is longer is known to `-w` only by that cut-down name, and a script run directly is named after its interpreter, where Linux would name it after the script.
+
+The second one is why `-x` works slightly differently here. Upstream requires that short name to be a prefix of the script's file name, which on Linux is what tells `./deploy.sh` from `sh deploy.sh`: the first leaves `deploy.sh` in that field, the second leaves `sh`. On macOS both leave `sh`, so keeping the check would mean `-x` never found a `#!/bin/sh` script at all unless its name happened to start with `sh`. This port leaves the check out, which finds the script either way it was started.
 
 ## Differences from procps-ng
 
-- **`-x` matches on the interpreter's name.** Described just above: it is the same comparison as upstream, applied to the short name the macOS kernel supplies, which names the interpreter rather than the script.
+- **`-x` also matches a script run as `sh script.sh`**, which Linux does not. This is deliberate, and it is the one place where this port does not copy upstream's comparison. macOS records the interpreter's name for a directly executed script as well, so upstream's guard cannot separate the two forms here; it can only reject both. Matching both is the useful half of that choice, and it makes `-x` a superset of the Linux answer rather than an empty one: every process Linux would report is reported, plus the interpreters started by hand on the same script.
 - **`-t` and `-c` do nothing**, for the reasons above. Upstream's `-t` adds thread ids and its `-c` filters by root directory when run as root.
 - **A process whose name is not valid UTF-8 cannot be matched.** Names and arguments are converted from the kernel's bytes with invalid sequences replaced, so a program whose name contains them is listed under the replacement character and no argument can equal it. Everything that is valid UTF-8, which is every ordinary program name, compares byte for byte.
 - **The process table is read once**, at the start of the run, where upstream rescans it for every program argument. Every program argument on one command line therefore sees the same table. The table is not a single instant of the machine's state either way: the list of processes comes from one call, but each process's arguments and executable path are looked up one by one after it.

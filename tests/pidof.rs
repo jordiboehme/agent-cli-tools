@@ -12,7 +12,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_pidof");
 
@@ -131,10 +131,48 @@ impl Sleeper {
             .stderr(Stdio::null())
             .spawn()
             .unwrap_or_else(|err| panic!("spawn {}: {err}", program.display()));
-        // The kernel needs a moment to finish the exec before the
-        // process table shows the program's own name and arguments.
-        std::thread::sleep(Duration::from_millis(250));
-        Self { child }
+        let mut sleeper = Self { child };
+        sleeper.settle(program);
+        sleeper
+    }
+
+    /// Wait for the exec to land, so that the process table shows the
+    /// program's own name and arguments rather than the copy of this
+    /// test process the child starts life as. A fixed pause would be a
+    /// race under load, and one lost by a hair reads as a match that did
+    /// not happen rather than as a process that was not ready.
+    ///
+    /// The child is also checked for having died on the way, which is
+    /// what a program macOS refuses to exec does, so that fails here and
+    /// by its own name instead of somewhere further along.
+    fn settle(&mut self, program: &Path) {
+        // The pid is in the table from the moment the process exists, so
+        // what marks the exec as done is the kernel's short name no
+        // longer being this test binary's. No program a test spawns
+        // shares that name.
+        let before = comm_of(std::process::id() as i32);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let gone = self.child.try_wait().expect("check on the sleeper");
+            assert!(
+                gone.is_none(),
+                "the sleeper {} died at once: {gone:?}",
+                program.display()
+            );
+            if let Some(process) = proc::all().into_iter().find(|p| p.pid == self.pid()) {
+                let named = process.comm != before;
+                let has_arguments = process.argv.is_some_and(|argv| !argv.is_empty());
+                if named && has_arguments {
+                    return;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the sleeper {} never reached exec",
+                program.display()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// `/bin/sleep`, under its own name or one the test made up.
@@ -463,42 +501,37 @@ fn no_match_and_no_arguments() {
 #[test]
 fn script_matching_requires_x() {
     let workspace = Workspace::new();
-    let plain_name = format!("{}.sh", unique("scr"));
-    let plain = workspace.script(&plain_name);
-    let running = Sleeper::spawn(&plain, &[], None);
-
-    // A script is never found by its own name without -x.
-    assert_eq!(code(&run(&[&plain_name])), 1);
-
-    // With -x it is found only when the kernel's short name for the
-    // process is a prefix of the script's file name. Linux puts the
-    // script's own name there, Darwin the interpreter's, so a script
-    // named like this one stays unmatched here.
-    let interpreter = comm_of(running.pid());
-    let out = run(&["-x", &plain_name]);
-    assert_eq!(code(&out), 1, "the process is named {interpreter:?}");
-
-    // A script whose name starts with the interpreter's does pass that
-    // guard, which is what exercises the rule on this platform.
-    let named = format!("{interpreter}{}.sh", unique("run"));
-    let script = workspace.script(&named);
+    let name = format!("{}.sh", unique("scr"));
+    let script = workspace.script(&name);
+    let path = script.to_str().expect("a text path");
     let direct = Sleeper::spawn(&script, &[], None);
-    let through_sh = Sleeper::spawn(Path::new("/bin/sh"), &[script.to_str().unwrap()], None);
+    let through_sh = Sleeper::spawn(Path::new("/bin/sh"), &[path], None);
 
-    let out = run(&["-x", &named]);
+    // Without -x a script is never found by its own name: the process is
+    // the interpreter, and the only thing about it that carries the
+    // script's name is the argument the interpreter was handed.
+    let out = run(&[&name]);
+    assert_eq!(code(&out), 1);
+    assert_eq!(stdout(&out), "");
+
+    // With -x that argument is matched, by its base name and whole.
+    let out = run(&["-x", &name]);
     assert_eq!(code(&out), 0);
     let found = pids(&out);
     assert!(found.contains(&direct.pid()), "{found:?}");
-    // Darwin gives both forms the same short name, so unlike on Linux
-    // the explicitly invoked interpreter is found as well.
+    // Darwin gives both ways of starting a script the same short name,
+    // so this port cannot leave the interpreter invoked by hand out the
+    // way Linux does. docs/pidof.md documents the wider match.
     assert!(found.contains(&through_sh.pid()), "{found:?}");
 
-    // The script's whole path matches the interpreter's own argument.
-    let found = pids(&run(&["-x", script.to_str().unwrap()]));
+    let found = pids(&run(&["-x", path]));
     assert!(found.contains(&direct.pid()), "{found:?}");
+    assert!(found.contains(&through_sh.pid()), "{found:?}");
 
-    // Without -x neither form is found.
-    assert_eq!(code(&run(&[&named])), 1);
+    // Only the script's own name is matched, not any other.
+    let out = run(&["-x", &format!("{}.sh", unique("nos"))]);
+    assert_eq!(code(&out), 1);
+    assert_eq!(stdout(&out), "");
 }
 
 #[test]

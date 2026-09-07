@@ -248,14 +248,17 @@ fn matches(program: &str, process: &Process, flags: &Flags) -> bool {
     if flags.scripts_too && argv.len() > 1 {
         let cmd_arg1 = argv[1].as_str();
         let cmd_arg1base = base_name(cmd_arg1);
-        // The guard that keeps `sh foo.sh` out: on Linux a script run
-        // directly leaves the script's own name in comm, so requiring
-        // comm to be a prefix of argv[1]'s base name admits only that
-        // form. Darwin names the interpreter there instead, which is why
-        // the docs call this option out.
-        if cmd_arg1base.starts_with(&process.comm)
-            && (program == cmd_arg1base || program_base == cmd_arg1 || program == cmd_arg1)
-        {
+        // Upstream guards these three tests with a check that the
+        // kernel's short name for the process is a prefix of argv[1]'s
+        // base name. On Linux that tells a script run directly, which
+        // leaves the script's own name in that field, from an
+        // interpreter invoked by hand, which leaves the interpreter's.
+        // Darwin records the interpreter's name for both, so keeping the
+        // guard would leave -x unable to find a `#!/bin/sh` script at
+        // all unless its name happened to start with `sh`. Dropping it
+        // costs that distinction, and only that: the interpreter invoked
+        // by hand is found as well. docs/pidof.md says so plainly.
+        if program == cmd_arg1base || program_base == cmd_arg1 || program == cmd_arg1 {
             return true;
         }
     }
@@ -312,11 +315,11 @@ fn main() {
             Item::Flag {
                 long: "omit-pid",
                 value,
-            } => add_to_omit_list(&mut omit, value.as_deref().unwrap_or(OsStr::new(""))),
+            } => add_to_omit_list(&mut omit, &value.expect("-o takes a required argument")),
             Item::Flag {
                 long: "separator" | "=sysv-separator",
                 value,
-            } => separator = value.unwrap_or_default(),
+            } => separator = value.expect("-S and -d take a required argument"),
             // -c has nothing to compare against here and -t has no thread
             // ids to add; -n and -m are compatibility switches upstream
             // ignores too. docs/pidof.md explains each one.
