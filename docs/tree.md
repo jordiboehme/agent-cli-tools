@@ -21,7 +21,7 @@ With no arguments it lists the current directory, drawing the branches with the 
 3 directories, 5 files
 ```
 
-Hidden files are left out unless `-a` asks for them, and a symbolic link to a directory is listed and counted as a directory but never followed, since `-l` is not implemented here.
+Hidden files are left out unless `-a` asks for them, and a symbolic link to a directory is listed and counted as a directory but never followed, since `-l` is not implemented here. Because it is not descended, `-P` filters it the way it filters a file.
 
 ## Options
 
@@ -32,7 +32,7 @@ Hidden files are left out unless `-a` asks for them, and a symbolic link to a di
 | `-f` | Print each name with the path it was reached by. |
 | `-i` | Leave the indentation lines out, giving a flat list. In `-J` it also takes the JSON's indentation and line breaks out. |
 | `-L level` | Descend at most that many levels. Read the way `strtoul` reads it, so `2x` is 2 and anything that is not a number at all is 0, which is an error. |
-| `-P pattern` | List only the files matching the pattern. Directories are not filtered by it unless `--matchdirs` is given. |
+| `-P pattern` | List only the files matching the pattern. Directories are not filtered by it unless `--matchdirs` is given; a symbolic link to a directory is, since it is never descended. |
 | `-I pattern` | Do not list what matches the pattern, directories included. |
 | `--ignore-case` | Fold case in `-P` and `-I`. |
 | `--matchdirs` | Let a directory name match `-P` too; everything under a directory that matches is then listed. |
@@ -105,7 +105,7 @@ Two malformed shapes are matches rather than errors, as they are upstream. A bra
 
 A pattern is tried against the whole path and against every part of it that starts after a `/`, so `-I 'b/c'` reaches `demo/a/b/c` and a pattern with no slash in it is effectively matched against the base name. Several `-P` or `-I` options are OR'd together.
 
-`-P` never filters directories, which is why `tree -P '*.rs'` still shows every directory, empty ones included. `--prune` removes the ones that ended up with nothing in them; `--matchdirs` lets a directory match the pattern itself, and then everything under it is listed.
+`-P` never filters a directory the walk descends, which is why `tree -P '*.rs'` still shows every directory, empty ones included. A symbolic link to a directory is not descended, so the pattern applies to it like to any file. `--prune` removes the ones that ended up with nothing in them; `--matchdirs` lets a directory match the pattern itself, and then everything under it is listed.
 
 `--prune` treats every reason a directory has nothing under it as the same thing. A directory that was empty, one the depth limit stopped at, a symlink to a directory, one over the `--filelimit` and one that could not be opened all disappear, and the last two stop counting as errors, so `tree --prune` over a tree with an unreadable directory in it exits 0 where plain `tree` exits 2.
 
@@ -167,6 +167,8 @@ The report counts the operand as a directory only when something was listed unde
 - **The six-month window for `-D` is 182 days**, which is where upstream's own constant lands.
 - **The JSON error flag is not sticky.** Once upstream has printed one `{"error": ...}` block, every later entry that is not a directory carries an empty `"contents":[    ]` array for the rest of the run, in later subdirectories too. That is a leak of the flag that produced the block, and this port leaves those entries with no `contents` key, the way an entry before the error is written.
 - **The usage block and `--help` are printed plain.** With colour on, upstream sets every option name in bold and every placeholder in italic in both; here they are the same text without the escapes, so a `--help` captured into a file reads the same either way.
+- **An attached short-option argument is accepted.** Upstream takes `-L1` but answers `-P'*.rs'` and `-I'build'` with `Missing argument to -P option.`; here all three forms read the attached text as the argument, the way every other short option with an argument does.
+- **`--matchdirs` does not hide an unreadable directory from the exit status.** Upstream exits 0 when `--matchdirs` is given and a directory could not be opened, where the same walk without it exits 2; here the status is 2 either way.
 - **A long option must be spelled out.** Upstream matches long names whole, and so does this, so `tree --nore` is the same `Invalid argument` error here as there, unlike the other commands in this project, which take unambiguous prefixes.
 
 Smaller ones: `--version` names this project instead of tree, `--help` carries a footer pointing here, and diagnostics use ASCII quotes.
