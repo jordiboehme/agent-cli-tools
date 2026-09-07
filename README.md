@@ -89,6 +89,7 @@ timeout --version
 
 | Command | Origin | What it does |
 |---|---|---|
+| [`nproc`](docs/nproc.md) | GNU coreutils 9.11 | Print the number of processing units available. |
 | [`timeout`](docs/timeout.md) | GNU coreutils 9.11 | Run a command with a time limit. |
 
 Each page documents the options, exit codes, and the few places where output differs from the original.
@@ -99,7 +100,6 @@ Candidates, in rough order of how often agents reach for them. All are absent fr
 
 | Command | Origin | Why agents type it |
 |---|---|---|
-| `nproc` | coreutils | `make -j$(nproc)` is in half the build scripts ever written. |
 | `tac` | coreutils | "Last matching line" pipelines, `grep ... \| tac \| head -1`. |
 | `shuf` | coreutils | Random samples and `shuf -n 1`. |
 | `sponge` | moreutils | Edit a file in place from a pipeline, `jq ... f \| sponge f`. |
