@@ -30,6 +30,10 @@ path = "src/bin/tac.rs"
 name = "pidof"
 path = "src/bin/pidof.rs"
 
+[[bin]]
+name = "watch"
+path = "src/bin/watch.rs"
+
 [dependencies]
 libc = "0.2"
 

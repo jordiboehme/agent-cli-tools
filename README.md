@@ -93,6 +93,7 @@ timeout --version
 | [`pidof`](docs/pidof.md) | procps-ng 4.0.6 | Find the process ids of a running program. |
 | [`tac`](docs/tac.md) | GNU coreutils 9.11 | Print files with the lines reversed, last line first. |
 | [`timeout`](docs/timeout.md) | GNU coreutils 9.11 | Run a command with a time limit. |
+| [`watch`](docs/watch.md) | procps-ng 4.0.7 | Run a command repeatedly and watch its output change. |
 
 Each page documents the options, exit codes, and the few places where output differs from the original.
 
@@ -107,7 +108,7 @@ Candidates, in rough order of how often agents reach for them. All are absent fr
 | `flock` | util-linux | Lock guards in cron, launchd, and loop-runner scripts. |
 | `setsid` | util-linux | Detaching daemons the Linux way. |
 
-Not planned: `realpath` and `readlink -f` (macOS has had them since Ventura and Monterey 12.3), `md5sum` and `sha256sum` (in `/sbin` on current macOS), `wget`, `tree`, and `watch` (agents recover with `curl`, `find`, and a loop), and anything that already exists on macOS in BSD form.
+Not planned: `realpath` and `readlink -f` (macOS has had them since Ventura and Monterey 12.3), `md5sum` and `sha256sum` (in `/sbin` on current macOS), `wget` and `tree` (agents recover with `curl` and `find`), and anything that already exists on macOS in BSD form.
 
 ## Development
 
