@@ -17,8 +17,13 @@ const TIOCGWINSZ: libc::c_ulong = 0x4008_7468;
 
 /// The alternate screen, cleared, with the cursor home, hidden, and
 /// automatic margin wrap off so a write into the last cell of the last
-/// row cannot scroll the display.
-const ENTER: &[u8] = b"\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?7l";
+/// row cannot scroll the display. The attribute reset comes before the
+/// clear on purpose: a terminal with back-colour erase paints the
+/// cleared area in whatever colour was last applied.
+const ENTER: &[u8] = b"\x1b[?1049h\x1b[0m\x1b[2J\x1b[H\x1b[?25l\x1b[?7l";
+
+/// A clear of the whole display, reset first for the same reason.
+const CLEAR: &[u8] = b"\x1b[0m\x1b[2J\x1b[H";
 
 /// The exact undo of `ENTER`, plus a reset of any attribute left over.
 const LEAVE: &[u8] = b"\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l";
@@ -238,7 +243,7 @@ impl<W: Write> Screen<W> {
         let count = usize::from(size.rows) * usize::from(size.cols);
         self.cells = vec![Cell::default(); count];
         self.shown = vec![Cell::default(); count];
-        self.pending.extend_from_slice(b"\x1b[2J\x1b[H");
+        self.pending.extend_from_slice(CLEAR);
     }
 
     fn blank(&mut self) {
@@ -416,6 +421,9 @@ mod tests {
         painted(&mut screen);
         screen.resize(Size { rows: 1, cols: 3 });
         screen.put(0, 2, 'b', Attrs::default());
-        assert_eq!(painted(&mut screen), "\x1b[2J\x1b[H\x1b[1;3H\x1b[0mb");
+        assert_eq!(
+            painted(&mut screen),
+            "\x1b[0m\x1b[2J\x1b[H\x1b[1;3H\x1b[0mb"
+        );
     }
 }

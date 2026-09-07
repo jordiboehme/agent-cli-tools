@@ -246,6 +246,11 @@ fn fatal(message: &str, code: i32) -> ! {
     process::exit(code)
 }
 
+/// The errno of the libc call that just failed.
+fn errno() -> i32 {
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+}
+
 fn strerror(code: i32) -> String {
     // SAFETY: strerror returns a valid NUL-terminated string for any
     // int, and the borrow ends before any other libc call could reuse
@@ -684,7 +689,7 @@ impl Render<'_> {
 
 /// A failure of the machine rather than of the command line.
 enum Fatal {
-    Pipes,
+    Pipes(String),
     Fork(String),
 }
 
@@ -708,7 +713,7 @@ fn run_command<W: Write>(
     let mut fds = [0 as libc::c_int; 2];
     // SAFETY: pipe fills the two-element array it is handed.
     if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-        return Err(Fatal::Pipes);
+        return Err(Fatal::Pipes(strerror(errno())));
     }
     // SAFETY: both descriptors come from a successful `pipe` and each is
     // wrapped exactly once, so ownership of them is not duplicated.
@@ -730,7 +735,9 @@ fn run_command<W: Write>(
             .stdin(Stdio::inherit())
             .stderr(Stdio::from(match writer.try_clone() {
                 Ok(clone) => clone,
-                Err(_) => return Err(Fatal::Pipes),
+                Err(error) => {
+                    return Err(Fatal::Pipes(strerror(error.raw_os_error().unwrap_or(0))));
+                }
             }))
             .stdout(Stdio::from(writer))
             .env("LINES", size.rows.to_string())
@@ -975,7 +982,9 @@ fn watch<W: Write>(screen: &mut Screen<W>, opts: &Options, spec: &Spec) -> Resul
         let started = Instant::now();
         let ran = match run_command(screen, spec, &mut render) {
             Ok(ran) => ran,
-            Err(Fatal::Pipes) => return Err("unable to create IPC pipes".to_string()),
+            Err(Fatal::Pipes(reason)) => {
+                return Err(format!("unable to create IPC pipes: {reason}"));
+            }
             Err(Fatal::Fork(reason)) => return Err(format!("unable to fork process: {reason}")),
         };
         let elapsed = started.elapsed();
@@ -992,21 +1001,10 @@ fn watch<W: Write>(screen: &mut Screen<W>, opts: &Options, spec: &Spec) -> Resul
         }
         screen.flush();
 
-        let after: Vec<Vec<char>> = (top..end).map(|row| screen.row_chars(row)).collect();
-        let changed = after != before;
-
-        if opts.chgexit && !first_screen && changed {
-            return Ok(0);
-        }
-        if let Some(limit) = opts.equexit {
-            if first_screen || changed {
-                cycles = 1;
-            } else if cycles >= limit {
-                return Ok(0);
-            } else {
-                cycles += 1;
-            }
-        }
+        // A non-zero status is answered before the screen is compared,
+        // which is the order upstream has it: a run that both failed and
+        // changed leaves through -e with the command's status rather
+        // than through -g with a zero one.
         if opts.errexit && status != 0 {
             put_str(screen, rows - 1, 0, ERREXIT_MESSAGE);
             screen.flush();
@@ -1024,6 +1022,22 @@ fn watch<W: Write>(screen: &mut Screen<W>, opts: &Options, spec: &Spec) -> Resul
                 return Ok(0);
             }
             return Ok(status);
+        }
+
+        let after: Vec<Vec<char>> = (top..end).map(|row| screen.row_chars(row)).collect();
+        let changed = after != before;
+
+        if opts.chgexit && !first_screen && changed {
+            return Ok(0);
+        }
+        if let Some(limit) = opts.equexit {
+            if first_screen || changed {
+                cycles = 1;
+            } else if cycles >= limit {
+                return Ok(0);
+            } else {
+                cycles += 1;
+            }
         }
         first_screen = false;
 

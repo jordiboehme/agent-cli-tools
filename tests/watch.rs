@@ -15,6 +15,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -207,6 +208,14 @@ impl Run {
         render(&self.raw, self.rows, self.cols)
     }
 
+    /// Which cells of the current frame are in reverse video.
+    fn reverse(&self) -> Vec<Vec<bool>> {
+        render_cells(&self.raw, self.rows, self.cols)
+            .into_iter()
+            .map(|row| row.into_iter().map(|(_, reverse)| reverse).collect())
+            .collect()
+    }
+
     /// Read until the screen satisfies `predicate`, or fail with what
     /// the screen looked like when the time ran out.
     fn wait_for(&mut self, what: &str, predicate: impl Fn(&[String]) -> bool) -> Vec<String> {
@@ -271,10 +280,14 @@ impl Run {
 }
 
 /// The terminal the tests read with: enough of one to follow watch's
-/// absolute cursor moves, its clears and the characters between them.
-fn render(raw: &[u8], rows: usize, cols: usize) -> Vec<String> {
-    let mut grid = vec![vec![' '; cols]; rows];
+/// absolute cursor moves, its clears, the characters between them and
+/// the one attribute the tests care about. Every cell comes back with
+/// whether it was written in reverse video, which is how `-d` marks a
+/// cell that changed.
+fn render_cells(raw: &[u8], rows: usize, cols: usize) -> Vec<Vec<(char, bool)>> {
+    let mut grid = vec![vec![(' ', false); cols]; rows];
     let (mut row, mut col) = (0usize, 0usize);
+    let mut reverse = false;
     let text = String::from_utf8_lossy(raw);
     let mut chars = text.chars();
     while let Some(ch) = chars.next() {
@@ -301,7 +314,11 @@ fn render(raw: &[u8], rows: usize, cols: usize) -> Vec<String> {
                         row = first.unwrap_or(1).saturating_sub(1);
                         col = second.unwrap_or(1).saturating_sub(1);
                     }
-                    'J' if params == "2" => grid = vec![vec![' '; cols]; rows],
+                    'J' if params == "2" => grid = vec![vec![(' ', false); cols]; rows],
+                    // watch writes every attribute as one reset-first
+                    // sequence, so a 7 anywhere in it means reverse and
+                    // its absence means the attribute is off again.
+                    'm' => reverse = params.split(';').any(|p| p == "7"),
                     _ => {}
                 }
             }
@@ -313,14 +330,20 @@ fn render(raw: &[u8], rows: usize, cols: usize) -> Vec<String> {
             _ if ch.is_control() => {}
             _ => {
                 if row < rows && col < cols {
-                    grid[row][col] = ch;
+                    grid[row][col] = (ch, reverse);
                 }
                 col += 1;
             }
         }
     }
-    grid.into_iter()
-        .map(|row| row.into_iter().collect())
+    grid
+}
+
+/// The characters of each row, which is what most cases assert on.
+fn render(raw: &[u8], rows: usize, cols: usize) -> Vec<String> {
+    render_cells(raw, rows, cols)
+        .into_iter()
+        .map(|row| row.into_iter().map(|(ch, _)| ch).collect())
         .collect()
 }
 
@@ -555,10 +578,136 @@ fn color_sequences_are_interpreted_only_with_the_option() {
     colored.wait_for_bytes(b"\x1b[0;31m", "a red foreground");
 }
 
+/// A counter file one case owns, removed with it, so the command a case
+/// runs can tell one run from the next and change its output in a way
+/// the case knows the shape of ahead of time.
+struct Counter {
+    path: PathBuf,
+}
+
+impl Counter {
+    fn new(tag: &str) -> Counter {
+        let path = std::env::temp_dir().join(format!("watch-test-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        Counter { path }
+    }
+
+    /// The shell that advances the counter and leaves it in `$n`.
+    fn bump(&self) -> String {
+        let file = self.path.display();
+        format!("n=$(cat {file} 2>/dev/null || echo 0); n=$((n+1)); printf %s \"$n\" > {file}")
+    }
+}
+
+impl Drop for Counter {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// A command whose output moves one cell at a time: `keep 1 x`, then
+/// `keep 2 x`, then `keep 2 y` and nothing further. Column 5 changes
+/// between the first two frames and column 7 between the next two, so a
+/// case can say exactly which cell `-d` should have marked and which it
+/// should have left alone.
+fn stepping_command(counter: &Counter) -> String {
+    format!(
+        "{}; [ \"$n\" -ge 2 ] && a=2 || a=1; [ \"$n\" -ge 3 ] && b=y || b=x; echo \"keep $a $b\"",
+        counter.bump()
+    )
+}
+
+/// Step to the next frame with the space key and wait for it to land.
+/// The interval these cases use is long enough that nothing arrives on
+/// its own, so a frame on the screen is one the case asked for.
+fn step_to(run: &mut Run, body: &str) {
+    run.key(b" ");
+    run.wait_for(body, |screen| screen[2].starts_with(body));
+}
+
 #[test]
-fn differences_highlight_the_cells_that_changed() {
-    let mut run = Run::new(&["-d", "-n", "0.2", "date"], 24, 80);
-    run.wait_for_bytes(b"\x1b[0;7m", "a cell in reverse video");
+fn nothing_is_highlighted_on_the_first_screen() {
+    let counter = Counter::new("first");
+    let command = stepping_command(&counter);
+    let mut run = Run::new(&["-d", "-x", "-n", "30", "sh", "-c", &command], 24, 80);
+    run.wait_for("keep 1 x", |screen| screen[2].starts_with("keep 1 x"));
+    let reverse = run.reverse();
+    assert!(
+        reverse.iter().all(|row| row.iter().all(|cell| !cell)),
+        "the first screen has nothing to compare against, so nothing is marked"
+    );
+}
+
+#[test]
+fn differences_highlight_only_the_cells_that_changed() {
+    let counter = Counter::new("diff");
+    let command = stepping_command(&counter);
+    let mut run = Run::new(&["-d", "-x", "-n", "30", "sh", "-c", &command], 24, 80);
+    run.wait_for("keep 1 x", |screen| screen[2].starts_with("keep 1 x"));
+
+    step_to(&mut run, "keep 2 x");
+    let reverse = run.reverse();
+    assert!(reverse[2][5], "the digit that changed should be marked");
+    assert!(
+        reverse[2][..5].iter().all(|cell| !cell) && !reverse[2][6] && !reverse[2][7],
+        "the text beside it did not change and should not be marked"
+    );
+
+    step_to(&mut run, "keep 2 y");
+    let reverse = run.reverse();
+    assert!(reverse[2][7], "the letter that changed should be marked");
+    assert!(
+        !reverse[2][5],
+        "a cell that has stopped changing loses its mark"
+    );
+}
+
+#[test]
+fn cumulative_differences_keep_a_cell_marked() {
+    let counter = Counter::new("permanent");
+    let command = stepping_command(&counter);
+    let mut run = Run::new(
+        &["-dpermanent", "-x", "-n", "30", "sh", "-c", &command],
+        24,
+        80,
+    );
+    run.wait_for("keep 1 x", |screen| screen[2].starts_with("keep 1 x"));
+
+    step_to(&mut run, "keep 2 x");
+    assert!(
+        run.reverse()[2][5],
+        "the digit that changed should be marked"
+    );
+
+    step_to(&mut run, "keep 2 y");
+    let reverse = run.reverse();
+    assert!(reverse[2][7], "the letter that changed should be marked");
+    assert!(
+        reverse[2][5],
+        "an argument to -d keeps a cell marked once it has changed"
+    );
+}
+
+#[test]
+fn a_failed_run_leaves_through_errexit_even_when_the_screen_changed() {
+    // Upstream answers the command's status before it compares screens,
+    // so a run that both failed and changed exits through -e with the
+    // command's status rather than through -g with a zero one.
+    let counter = Counter::new("errexit-chgexit");
+    let command = format!(
+        "{}; echo \"run $n\"; [ \"$n\" -ge 2 ] && exit 3; exit 0",
+        counter.bump()
+    );
+    let mut run = Run::new(
+        &["-e", "-g", "-x", "-n", "0.3", "sh", "-c", &command],
+        24,
+        80,
+    );
+    run.wait_for("the errexit message", |screen| {
+        screen[23].starts_with("command exit with a non-zero status, press a key to exit")
+    });
+    run.key(b"x");
+    assert_eq!(run.wait_exit().code(), Some(3));
 }
 
 #[test]
