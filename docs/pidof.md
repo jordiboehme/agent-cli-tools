@@ -13,7 +13,7 @@ Each PROGRAM is a command name, a file name, or a path. Every matching process i
 | `-s`, `--single-shot` | Return one pid only: the highest one, per program argument. |
 | `-c`, `--check-root` | Accepted and ignored. See macOS notes. |
 | `-q` | Quiet mode: print nothing at all, only set the exit status. Implies `-s`. |
-| `-w`, `--with-workers` | Also consider processes whose arguments could not be read. See macOS notes. |
+| `-w`, `--with-workers` | Also match the kernel's short name for a process, and consider processes that have no arguments at all. See macOS notes. |
 | `-x` | Also find shells running the named script, whether it was started directly or handed to an interpreter. |
 | `-o`, `--omit-pid PID,...` | Omit these processes. Repeatable. |
 | `-t`, `--lightweight` | Accepted and ignored. See macOS notes. |
@@ -28,7 +28,7 @@ Options may appear anywhere on the command line, before or after a program name,
 
 ## Matching
 
-For every process, `pidof` derives four things: the kernel's short name for it, its argument vector, the base name and the whole of the resolved path to its executable. A process whose argument vector cannot be read is skipped entirely unless `-w` is given.
+For every process, `pidof` derives four things: the kernel's short name for it, its argument vector, the base name and the whole of the resolved path to its executable. A process that has no arguments at all is skipped unless `-w` is given. A process whose argument vector could not be read is not skipped: it has no `argv[0]`, so the three rules that need one simply do not apply to it, and the rest still do.
 
 `argv[0]` with a single leading `-` removed (a login shell writes one there) is the process's own name. The program argument matches when any of these is true, tested in this order:
 
@@ -42,6 +42,8 @@ For every process, `pidof` derives four things: the kernel's short name for it, 
 There is no rule that a program argument containing a slash means "this path and nothing else": rule 2 makes a path match by its base name as well. A base name here is whatever follows the last `/`, which is not what `basename(3)` returns: a trailing slash leaves an empty base name, so `pidof sleep/` matches nothing at all.
 
 Rules 5 and 6 use the path the kernel reports, which has every symbolic link resolved. A program started through a link is therefore found under the link's name, from `argv[0]`, and under the name of the file it points at, from the executable path.
+
+Rules 1, 2 and 3 are the ones that read `argv[0]`, so a process whose arguments the kernel would not hand over is left with rules 5 and 6, and with rule 4 when `-w` is given. It is found under the name of the file it executed and under the whole path to that file, which is how `pidof launchd` and `pidof /sbin/launchd` both find pid 1. The names that only `argv[0]` carries are the ones out of reach, the link's name of the paragraph above among them: another user's process started through a link, or with a command line it rewrote itself, answers to the name of the file behind it alone.
 
 If none of the six matched and `-x` was given and the process has an `argv[1]`, the same first three tests are applied to `argv[1]`, which is the script an interpreter was handed. Upstream guards that with a check on the process's short name, which this port leaves out because on macOS it would make `-x` useless; the macOS notes and the differences below say what that changes.
 
@@ -78,9 +80,9 @@ There is no other status: an invalid option exits 1 as well, after printing the 
 
 ## macOS notes
 
-macOS has no `/proc`, so the process table comes from `sysctl(KERN_PROC_ALL)`, the executable path from `proc_pidpath` and the argument vector from `sysctl(KERN_PROCARGS2)`. All three work for an ordinary user, with one limit: the kernel hands out the argument vector of a process only to its owner. A process belonging to another user is therefore skipped unless `-w` is given, and with `-w` it can still be found by its short name or its executable path, just not by its arguments.
+macOS has no `/proc`, so the process table comes from `sysctl(KERN_PROC_ALL)`, the executable path from `proc_pidpath` and the argument vector from `sysctl(KERN_PROCARGS2)`. All three work for an ordinary user, with one limit: the kernel hands out the argument vector of a process only to its owner. A process belonging to another user is still found, by the base name of its executable and by the whole path to it, which is what makes `pidof launchd` and `pidof nginx` answer here the way they do on Linux; `-w` adds the kernel's short name on top. Only the name a process carries in `argv[0]` is out of reach, so one that another user started under a different name, through a symbolic link or an `exec -a`, is found here under the name of the file it executed where Linux would also find it under the rewritten one.
 
-That is what `-w` means here. macOS has no kernel worker threads for it to reveal, so it reduces to "also consider the processes whose arguments could not be read", which covers other users' processes and `kernel_task`.
+macOS has no kernel worker threads for `-w` to reveal, so what it means here is two smaller things: the kernel's short name becomes a rule of its own, and a process with no arguments at all is considered instead of skipped. `kernel_task`, which has neither arguments nor an executable path, is the one process that needs it.
 
 `-c` is accepted and ignored. Upstream compares `/proc/PID/root` against its own and only does so when running as root, which is why it is silently ignored for everybody else there too; macOS has no per-process root to compare.
 
@@ -93,6 +95,7 @@ The second one is why `-x` works slightly differently here. Upstream requires th
 ## Differences from procps-ng
 
 - **`-x` also matches a script run as `sh script.sh`**, which Linux does not. This is deliberate, and it is the one place where this port does not copy upstream's comparison. macOS records the interpreter's name for a directly executed script as well, so upstream's guard cannot separate the two forms here; it can only reject both. Matching both is the useful half of that choice, and it makes `-x` a superset of the Linux answer rather than an empty one: every process Linux would report is reported, plus the interpreters started by hand on the same script.
+- **Another user's process is matched on its executable, not on its `argv[0]`.** Linux reads the argument vector of every process out of `/proc`, Darwin gives it to the owner only, so rules 1, 2 and 3 cannot fire for a process somebody else started. It is found by the base name of its executable and by the whole path to it, which is the same answer for everything started under its own name. It differs for a process started under another name, through a symbolic link or an `exec -a`: Linux finds it under that name as well, and here it does not.
 - **`-t` and `-c` do nothing**, for the reasons above. Upstream's `-t` adds thread ids and its `-c` filters by root directory when run as root.
 - **A process whose name is not valid UTF-8 cannot be matched.** Names and arguments are converted from the kernel's bytes with invalid sequences replaced, so a program whose name contains them is listed under the replacement character and no argument can equal it. Everything that is valid UTF-8, which is every ordinary program name, compares byte for byte.
 - **The process table is read once**, at the start of the run, where upstream rescans it for every program argument. Every program argument on one command line therefore sees the same table. The table is not a single instant of the machine's state either way: the list of processes comes from one call, but each process's arguments and executable path are looked up one by one after it.

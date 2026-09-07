@@ -535,26 +535,46 @@ fn script_matching_requires_x() {
 }
 
 #[test]
-fn workers_option_reaches_a_process_without_arguments() {
+fn another_users_process_is_found_through_its_executable() {
     let launchd = proc::all()
         .into_iter()
         .find(|p| p.pid == 1)
         .expect("launchd is listed");
+    let Some(exe) = launchd.exe.as_deref() else {
+        return;
+    };
+    let name = exe.rsplit('/').next().expect("a base name");
 
     // pid 1 belongs to root, so an ordinary user cannot read its
-    // arguments and only -w considers it at all.
-    if launchd.argv.is_none() {
-        let found = pids(&run(&[&launchd.comm]));
-        assert!(!found.contains(&1), "{found:?}");
-    }
-    let found = pids(&run(&["-w", &launchd.comm]));
+    // arguments. The executable path rules need none of them, and they
+    // are what makes the plain lookup answer the way Linux does.
+    let found = pids(&run(&[name]));
+    assert!(found.contains(&1), "{found:?}");
+    let found = pids(&run(&[exe]));
     assert!(found.contains(&1), "{found:?}");
 
-    // The executable path is readable for it either way.
-    if let Some(exe) = launchd.exe.as_deref() {
-        let found = pids(&run(&["-w", exe]));
-        assert!(found.contains(&1), "{found:?}");
+    // -w adds the kernel's short name and takes nothing away.
+    let found = pids(&run(&["-w", name]));
+    assert!(found.contains(&1), "{found:?}");
+}
+
+#[test]
+fn workers_option_reaches_a_process_the_kernel_will_not_name() {
+    let Some(kernel) = proc::all().into_iter().find(|p| p.pid == 0) else {
+        return;
+    };
+    // With neither an argument vector nor an executable path there is
+    // nothing left but the short name, which is the one rule -w adds.
+    // A kernel that hands out either of those for pid 0 leaves this case
+    // with nothing to say, so it steps aside.
+    if kernel.argv.is_some() || kernel.exe.is_some() {
+        return;
     }
+
+    let found = pids(&run(&[&kernel.comm]));
+    assert!(!found.contains(&0), "{found:?}");
+    let found = pids(&run(&["-w", &kernel.comm]));
+    assert!(found.contains(&0), "{found:?}");
 }
 
 #[test]

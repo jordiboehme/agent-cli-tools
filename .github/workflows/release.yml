@@ -82,7 +82,7 @@ jobs:
           target/${{ matrix.target }}/release/timeout 0.2 sleep 5 && exit 1 || [ $? -eq 124 ]
           test "$(target/${{ matrix.target }}/release/nproc --ignore=99999)" = "1"
           printf 'a\nb\n' | target/${{ matrix.target }}/release/tac | head -1 | grep -qx b
-          target/${{ matrix.target }}/release/pidof -w launchd | grep -qw 1
+          target/${{ matrix.target }}/release/pidof launchd | grep -qw 1
           target/${{ matrix.target }}/release/tree --version > /dev/null
           target/${{ matrix.target }}/release/watch --help > /dev/null
 

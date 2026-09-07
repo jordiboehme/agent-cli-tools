@@ -219,25 +219,33 @@ fn add_to_omit_list(list: &mut Vec<i32>, value: &OsStr) {
 /// The six tests, the `-x` script rule and the setproctitle fallback are
 /// procps' `select_procs` in the order it applies them.
 fn matches(program: &str, process: &Process, flags: &Flags) -> bool {
-    let argv = process.argv.as_deref().unwrap_or(&[]);
-    // No argument vector means either a kernel worker on Linux or, here,
-    // a process owned by another user. Upstream skips both unless -w.
-    if argv.is_empty() && !flags.with_workers {
+    // An argument vector that is there but empty is a process with no
+    // arguments at all, which is what upstream's -w is really about, and
+    // it stays skipped without the option. An absent one means something
+    // else here: Linux reads the vector of any process out of /proc,
+    // while Darwin hands it only to the owner, so skipping those too
+    // would leave `pidof launchd` empty for an ordinary user where Linux
+    // answers 1. Such a process is tested on its executable path
+    // instead, and rules 1 to 3 below have nothing to compare against.
+    let argv = process.argv.as_deref();
+    if argv.is_some_and(<[String]>::is_empty) && !flags.with_workers {
         return false;
     }
+    let args = argv.unwrap_or(&[]);
 
     // A leading '-' marks a login shell and is not part of the name.
-    let arg0 = argv.first().map_or("", |a| a.as_str());
-    let cmd_arg0 = arg0.strip_prefix('-').unwrap_or(arg0);
-    let cmd_arg0base = base_name(cmd_arg0);
+    let cmd_arg0 = args.first().map(|arg0| {
+        let arg0 = arg0.as_str();
+        arg0.strip_prefix('-').unwrap_or(arg0)
+    });
     // A process whose executable the kernel will not name is left with an
     // empty path, which no program argument can equal.
     let exe = process.exe.as_deref().unwrap_or("");
     let program_base = base_name(program);
 
-    if program == cmd_arg0base
-        || program_base == cmd_arg0
-        || program == cmd_arg0
+    if cmd_arg0.is_some_and(|arg0| program == base_name(arg0))
+        || cmd_arg0.is_some_and(|arg0| program_base == arg0)
+        || cmd_arg0 == Some(program)
         || (flags.with_workers && program == process.comm)
         || program == base_name(exe)
         || program == exe
@@ -245,8 +253,8 @@ fn matches(program: &str, process: &Process, flags: &Flags) -> bool {
         return true;
     }
 
-    if flags.scripts_too && argv.len() > 1 {
-        let cmd_arg1 = argv[1].as_str();
+    if flags.scripts_too && args.len() > 1 {
+        let cmd_arg1 = args[1].as_str();
         let cmd_arg1base = base_name(cmd_arg1);
         // Upstream guards these three tests with a check that the
         // kernel's short name for the process is a prefix of argv[1]'s
@@ -265,7 +273,7 @@ fn matches(program: &str, process: &Process, flags: &Flags) -> bool {
 
     // A space in argv[0] means the program most likely rewrote its own
     // command line, so its name is the only thing left to trust.
-    if cmd_arg0.contains(' ') {
+    if cmd_arg0.is_some_and(|arg0| arg0.contains(' ')) {
         return program == process.comm;
     }
     false
