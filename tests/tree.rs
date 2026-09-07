@@ -118,6 +118,103 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+/// Upstream's whole `--help` text, the one this port reprints before its
+/// own footer. Written a line at a time: a Rust line continuation eats
+/// the leading whitespace of the line that follows it, which is exactly
+/// the bug this pins down.
+const HELP_TEXT: &[&str] = &[
+    "usage: tree [-acdfghilnpqrstuvxACDFJQNSUX] [-L level [-R]] [-H [-]baseHREF]",
+    "\t[-T title] [-o filename] [-P pattern] [-I pattern] [--gitignore]",
+    "\t[--gitfile[=]file] [--matchdirs] [--metafirst] [--ignore-case]",
+    "\t[--nolinks] [--hintro[=]file] [--houtro[=]file] [--inodes] [--device]",
+    "\t[--sort[=]name] [--dirsfirst] [--filesfirst] [--filelimit[=]#] [--si]",
+    "\t[--du] [--prune] [--charset[=]X] [--timefmt[=]format] [--fromfile]",
+    "\t[--fromtabfile] [--fflinks] [--info] [--infofile[=]file] [--noreport]",
+    "\t[--hyperlink] [--scheme[=]schema] [--authority[=]host] [--opt-toggle]",
+    "\t[--compress[=]#] [--condense] [--version] [--help]",
+    "\t[--] [directory ...]",
+    "  ------- Listing options -------",
+    "  -a            All files are listed.",
+    "  -d            List directories only.",
+    "  -l            Follow symbolic links like directories.",
+    "  -f            Print the full path prefix for each file.",
+    "  -x            Stay on current filesystem only.",
+    "  -L level      Descend only level directories deep.",
+    "  -R            Rerun tree when max dir level reached.",
+    "  -P pattern    List only those files that match the pattern given.",
+    "  -I pattern    Do not list files that match the given pattern.",
+    "  --gitignore   Filter by using .gitignore files.",
+    "  --gitfile X   Explicitly read a gitignore file.",
+    "  --ignore-case Ignore case when pattern matching.",
+    "  --matchdirs   Include directory names in -P pattern matching.",
+    "  --metafirst   Print meta-data at the beginning of each line.",
+    "  --prune       Prune empty directories from the output.",
+    "  --info        Print information about files found in .info files.",
+    "  --infofile X  Explicitly read info file.",
+    "  --noreport    Turn off file/directory count at end of tree listing.",
+    "  --charset X   Use charset X for terminal/HTML and indentation line output.",
+    "  --filelimit # Do not descend dirs with more than # files in them.",
+    "  --condense    Condense directory singletons to a single line of output.",
+    "  -o filename   Output to file instead of stdout.",
+    "  ------- File options -------",
+    "  -q            Print non-printable characters as '?'.",
+    "  -N            Print non-printable characters as is.",
+    "  -Q            Quote filenames with double quotes.",
+    "  -p            Print the protections for each file.",
+    "  -u            Displays file owner or UID number.",
+    "  -g            Displays file group owner or GID number.",
+    "  -s            Print the size in bytes of each file.",
+    "  -h            Print the size in a more human readable way.",
+    "  --si          Like -h, but use in SI units (powers of 1000).",
+    "  --du          Compute size of directories by their contents.",
+    "  -D            Print the date of last modification or (-c) status change.",
+    "  --timefmt fmt Print and format time according to the format fmt.",
+    "  -F            Appends '/', '=', '*', '@', '|' or '>' as per ls -F.",
+    "  --inodes      Print inode number of each file.",
+    "  --device      Print device ID number to which each file belongs.",
+    "  ------- Sorting options -------",
+    "  -v            Sort files alphanumerically by version.",
+    "  -t            Sort files by last modification time.",
+    "  -c            Sort files by last status change time.",
+    "  -U            Leave files unsorted.",
+    "  -r            Reverse the order of the sort.",
+    "  --dirsfirst   List directories before files (-U disables).",
+    "  --filesfirst  List files before directories (-U disables).",
+    "  --sort X      Select sort: name,version,size,mtime,ctime,none.",
+    "  ------- Graphics options -------",
+    "  -i            Don't print indentation lines.",
+    "  -A            Print ANSI lines graphic indentation lines.",
+    "  -S            Print with CP437 (console) graphics indentation lines.",
+    "  -n            Turn colorization off always (-C overrides).",
+    "  -C            Turn colorization on always.",
+    "  --compress #  Compress indentation lines.",
+    "  ------- XML/HTML/JSON/HYPERLINK options -------",
+    "  -X            Prints out an XML representation of the tree.",
+    "  -J            Prints out an JSON representation of the tree.",
+    "  -H baseHREF   Prints out HTML format with baseHREF as top directory.",
+    "  -T string     Replace the default HTML title and H1 header with string.",
+    "  --nolinks     Turn off hyperlinks in HTML output.",
+    "  --hintro X    Use file X as the HTML intro.",
+    "  --houtro X    Use file X as the HTML outro.",
+    "  --hyperlink   Turn on OSC 8 terminal hyperlinks.",
+    "  --scheme X    Set OSC 8 hyperlink scheme, default file://",
+    "  --authority X Set OSC 8 hyperlink authority/hostname.",
+    "  ------- Input options -------",
+    "  --fromfile    Reads paths from files (.=stdin)",
+    "  --fromtabfile Reads trees from tab indented files (.=stdin)",
+    "  --fflinks     Process link information when using --fromfile.",
+    "  ------- Miscellaneous options -------",
+    "  --opt-toggle  Enable option toggling.",
+    "  --version     Print version and exit.",
+    "  --help        Print usage and this help message and exit.",
+    "  --            Options processing terminator.",
+];
+
+/// The footer this port adds after upstream's help text, the only part
+/// of `--help` that differs.
+const HELP_FOOTER: &str = "\nPart of agent-cli-tools <https://github.com/jordiboehme/agent-cli-tools>\n\
+Compatible with tree 2.3.2; the options it leaves out are refused by name.\n";
+
 /// The listing `tree` prints in the fixture with no options at all.
 fn default_listing() -> String {
     format!(
@@ -267,6 +364,77 @@ fn include_patterns_do_not_filter_directories() {
 
     let out = run(&demo, &["-P", "*.RS", "--ignore-case", "--noreport"]);
     assert!(stdout(&out).contains("lib.rs"), "{}", stdout(&out));
+}
+
+/// Run a case here and, when the oracle is present, assert that the real
+/// tree answers with the same bytes and the same status.
+fn agrees_with_oracle(demo: &Demo, args: &[&str]) -> Output {
+    let mine = run(demo, args);
+    if let Some(oracle) = std::env::var_os("AGENT_CLI_TOOLS_TREE_ORACLE") {
+        let theirs = command_for(Path::new(&oracle), &demo.path(), args, "en_US.UTF-8")
+            .output()
+            .expect("spawn the oracle");
+        assert_eq!(mine.stdout, theirs.stdout, "stdout differs for {args:?}");
+        assert_eq!(mine.stderr, theirs.stderr, "stderr differs for {args:?}");
+        assert_eq!(
+            mine.status.code(),
+            theirs.status.code(),
+            "exit status differs for {args:?}"
+        );
+    }
+    mine
+}
+
+#[test]
+fn malformed_patterns_match_what_upstream_matches() {
+    let demo = Demo::new("malformed");
+    let all = format!(
+        ".\n\
+         {TEE}Cargo.toml\n\
+         {TEE}docs\n\
+         {TEE}node_modules\n\
+         {TEE}README.md\n\
+         {END}src\n"
+    );
+
+    // A bracket group with no closing bracket is a malformed pattern,
+    // and upstream's matcher answers it with a match, but only once the
+    // scan has got that far: `do[` reaches the bracket on docs and
+    // nowhere else, and `z*[` never reaches it at all.
+    let out = agrees_with_oracle(&demo, &["-L", "1", "--noreport", "-I", "do["]);
+    assert_eq!(
+        stdout(&out),
+        format!(
+            ".\n\
+             {TEE}Cargo.toml\n\
+             {TEE}node_modules\n\
+             {TEE}README.md\n\
+             {END}src\n"
+        )
+    );
+    let out = agrees_with_oracle(&demo, &["-L", "1", "--noreport", "-I", "z*["]);
+    assert_eq!(stdout(&out), all);
+    let out = agrees_with_oracle(&demo, &["-L", "1", "--noreport", "-I", "*["]);
+    assert_eq!(stdout(&out), ".\n");
+
+    // An empty alternative matches everything, so an accidental trailing
+    // bar excludes the lot; a pattern that is empty from end to end has
+    // no alternation in it and excludes nothing.
+    for pattern in ["node_modules|", "|node_modules", "|"] {
+        let out = agrees_with_oracle(&demo, &["-L", "1", "--noreport", "-I", pattern]);
+        assert_eq!(stdout(&out), ".\n", "{pattern}");
+    }
+    let out = agrees_with_oracle(&demo, &["-L", "1", "--noreport", "-I", ""]);
+    assert_eq!(stdout(&out), all);
+
+    // The same two rules seen from -P, where a match keeps a file
+    // instead of dropping it.
+    let out = agrees_with_oracle(&demo, &["--noreport", "-P", "guide.md|"]);
+    assert!(stdout(&out).contains("index.js"), "{}", stdout(&out));
+    let out = agrees_with_oracle(&demo, &["--noreport", "-P", "["]);
+    assert!(stdout(&out).contains("index.js"), "{}", stdout(&out));
+    let out = agrees_with_oracle(&demo, &["--noreport", "-P", "zz["]);
+    assert!(!stdout(&out).contains("index.js"), "{}", stdout(&out));
 }
 
 #[test]
@@ -705,6 +873,12 @@ fn unsupported_options_print_a_runnable_command() {
         stderr(&run(&demo, &["--du", "src", "docs"])).lines().nth(1),
         Some("Use instead: du -sh src docs")
     );
+    // An option's own argument is an option argument, never an operand
+    // of the command that is printed instead.
+    assert_eq!(
+        stderr(&run(&demo, &["-H", "base", "src"])).lines().nth(1),
+        Some("Use instead: tree -J src")
+    );
 
     // Every option the spec defers, with the command it names instead.
     // The ones taking an argument are given one, so the argument can
@@ -722,6 +896,21 @@ fn unsupported_options_print_a_runnable_command() {
         (&["-g"], "-g", "ls -l ."),
         (&["--device"], "--device", "find . -xdev"),
         (&["-x"], "-x", "find . -xdev"),
+        // The HTML options and the rerun point at the JSON form, which
+        // is the machine-readable output this build does have. Each of
+        // their own arguments is an option argument, so none of them can
+        // be mistaken for an operand of the line that is printed.
+        (&["-H", "base"], "-H", "tree -J ."),
+        (&["-T", "title"], "-T", "tree -J ."),
+        (&["-R"], "-R", "tree -J ."),
+        (&["--nolinks"], "--nolinks", "tree -J ."),
+        (&["--hintro", "intro"], "--hintro", "tree -J ."),
+        (&["--houtro", "outro"], "--houtro", "tree -J ."),
+        (
+            &["--gitfile", "ignore"],
+            "--gitfile",
+            "tree -I 'node_modules|target|.git' .",
+        ),
     ];
     for (args, name, instead) in with_command {
         let out = run(&demo, args);
@@ -754,13 +943,6 @@ fn unsupported_options_print_a_runnable_command() {
         (&["--hyperlink"], "--hyperlink"),
         (&["--scheme", "file://"], "--scheme"),
         (&["--authority", "host"], "--authority"),
-        (&["-H", "base"], "-H"),
-        (&["-T", "title"], "-T"),
-        (&["-R"], "-R"),
-        (&["--nolinks"], "--nolinks"),
-        (&["--hintro", "intro"], "--hintro"),
-        (&["--houtro", "outro"], "--houtro"),
-        (&["--gitfile", "ignore"], "--gitfile"),
     ];
     for (args, name) in without_command {
         let out = run(&demo, args);
@@ -782,8 +964,25 @@ fn help_and_version() {
     let out = run(&demo, &["--help"]);
     assert_eq!(code(&out), 0);
     assert_eq!(stderr(&out), "");
-    assert!(stdout(&out).starts_with("usage: tree "), "{}", stdout(&out));
-    assert!(stdout(&out).contains("-J            Prints out an JSON"));
+
+    // Byte for byte, upstream's text and then the footer: the two-space
+    // indent of every body line is easy to lose and impossible to see.
+    let text = stdout(&out);
+    let (body, footer) = text
+        .split_once(HELP_FOOTER)
+        .map_or((text.as_str(), ""), |(body, rest)| (body, rest));
+    assert_eq!(footer, "", "the footer must be the end of the text");
+    let expected = format!("{}\n", HELP_TEXT.join("\n"));
+    assert_eq!(body, expected);
+
+    // And against the real thing when it is here, so the checked-in copy
+    // cannot drift away from it either.
+    if let Some(oracle) = std::env::var_os("AGENT_CLI_TOOLS_TREE_ORACLE") {
+        let theirs = command_for(Path::new(&oracle), &demo.path(), &["--help"], "en_US.UTF-8")
+            .output()
+            .expect("spawn the oracle");
+        assert_eq!(theirs.stdout, expected.as_bytes());
+    }
 
     let out = run(&demo, &["--version"]);
     assert_eq!(code(&out), 0);
@@ -836,15 +1035,21 @@ fn matches_the_real_tree() {
         let theirs = command_for(&oracle, &dir, case, "en_US.UTF-8")
             .output()
             .expect("spawn the oracle");
+        // Bytes, not lossy strings: two different invalid sequences
+        // both become U+FFFD, and an escaping divergence would pass.
         assert_eq!(
+            mine.stdout,
+            theirs.stdout,
+            "stdout differs for {case:?}\n  ours: {}\ntheirs: {}",
             String::from_utf8_lossy(&mine.stdout),
-            String::from_utf8_lossy(&theirs.stdout),
-            "stdout differs for {case:?}"
+            String::from_utf8_lossy(&theirs.stdout)
         );
         assert_eq!(
+            mine.stderr,
+            theirs.stderr,
+            "stderr differs for {case:?}\n  ours: {}\ntheirs: {}",
             String::from_utf8_lossy(&mine.stderr),
-            String::from_utf8_lossy(&theirs.stderr),
-            "stderr differs for {case:?}"
+            String::from_utf8_lossy(&theirs.stderr)
         );
         assert_eq!(
             mine.status.code(),

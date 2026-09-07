@@ -36,81 +36,81 @@ usage: tree [-acdfghilnpqrstuvxACDFJQNSUX] [-L level [-R]] [-H [-]baseHREF]\n\
 /// reader of the man page see the same surface; the ones this build does
 /// not implement say so when they are used.
 const HELP_BODY: &str = "\
-  ------- Listing options -------\n\
-  -a            All files are listed.\n\
-  -d            List directories only.\n\
-  -l            Follow symbolic links like directories.\n\
-  -f            Print the full path prefix for each file.\n\
-  -x            Stay on current filesystem only.\n\
-  -L level      Descend only level directories deep.\n\
-  -R            Rerun tree when max dir level reached.\n\
-  -P pattern    List only those files that match the pattern given.\n\
-  -I pattern    Do not list files that match the given pattern.\n\
-  --gitignore   Filter by using .gitignore files.\n\
-  --gitfile X   Explicitly read a gitignore file.\n\
-  --ignore-case Ignore case when pattern matching.\n\
-  --matchdirs   Include directory names in -P pattern matching.\n\
-  --metafirst   Print meta-data at the beginning of each line.\n\
-  --prune       Prune empty directories from the output.\n\
-  --info        Print information about files found in .info files.\n\
-  --infofile X  Explicitly read info file.\n\
-  --noreport    Turn off file/directory count at end of tree listing.\n\
-  --charset X   Use charset X for terminal/HTML and indentation line output.\n\
-  --filelimit # Do not descend dirs with more than # files in them.\n\
-  --condense    Condense directory singletons to a single line of output.\n\
-  -o filename   Output to file instead of stdout.\n\
-  ------- File options -------\n\
-  -q            Print non-printable characters as '?'.\n\
-  -N            Print non-printable characters as is.\n\
-  -Q            Quote filenames with double quotes.\n\
-  -p            Print the protections for each file.\n\
-  -u            Displays file owner or UID number.\n\
-  -g            Displays file group owner or GID number.\n\
-  -s            Print the size in bytes of each file.\n\
-  -h            Print the size in a more human readable way.\n\
-  --si          Like -h, but use in SI units (powers of 1000).\n\
-  --du          Compute size of directories by their contents.\n\
-  -D            Print the date of last modification or (-c) status change.\n\
-  --timefmt fmt Print and format time according to the format fmt.\n\
-  -F            Appends '/', '=', '*', '@', '|' or '>' as per ls -F.\n\
-  --inodes      Print inode number of each file.\n\
-  --device      Print device ID number to which each file belongs.\n\
-  ------- Sorting options -------\n\
-  -v            Sort files alphanumerically by version.\n\
-  -t            Sort files by last modification time.\n\
-  -c            Sort files by last status change time.\n\
-  -U            Leave files unsorted.\n\
-  -r            Reverse the order of the sort.\n\
-  --dirsfirst   List directories before files (-U disables).\n\
-  --filesfirst  List files before directories (-U disables).\n\
-  --sort X      Select sort: name,version,size,mtime,ctime,none.\n\
-  ------- Graphics options -------\n\
-  -i            Don't print indentation lines.\n\
-  -A            Print ANSI lines graphic indentation lines.\n\
-  -S            Print with CP437 (console) graphics indentation lines.\n\
-  -n            Turn colorization off always (-C overrides).\n\
-  -C            Turn colorization on always.\n\
-  --compress #  Compress indentation lines.\n\
-  ------- XML/HTML/JSON/HYPERLINK options -------\n\
-  -X            Prints out an XML representation of the tree.\n\
-  -J            Prints out an JSON representation of the tree.\n\
-  -H baseHREF   Prints out HTML format with baseHREF as top directory.\n\
-  -T string     Replace the default HTML title and H1 header with string.\n\
-  --nolinks     Turn off hyperlinks in HTML output.\n\
-  --hintro X    Use file X as the HTML intro.\n\
-  --houtro X    Use file X as the HTML outro.\n\
-  --hyperlink   Turn on OSC 8 terminal hyperlinks.\n\
-  --scheme X    Set OSC 8 hyperlink scheme, default file://\n\
-  --authority X Set OSC 8 hyperlink authority/hostname.\n\
-  ------- Input options -------\n\
-  --fromfile    Reads paths from files (.=stdin)\n\
-  --fromtabfile Reads trees from tab indented files (.=stdin)\n\
-  --fflinks     Process link information when using --fromfile.\n\
-  ------- Miscellaneous options -------\n\
-  --opt-toggle  Enable option toggling.\n\
-  --version     Print version and exit.\n\
-  --help        Print usage and this help message and exit.\n\
-  --            Options processing terminator.\n\
+\x20\x20------- Listing options -------\n\
+\x20\x20-a            All files are listed.\n\
+\x20\x20-d            List directories only.\n\
+\x20\x20-l            Follow symbolic links like directories.\n\
+\x20\x20-f            Print the full path prefix for each file.\n\
+\x20\x20-x            Stay on current filesystem only.\n\
+\x20\x20-L level      Descend only level directories deep.\n\
+\x20\x20-R            Rerun tree when max dir level reached.\n\
+\x20\x20-P pattern    List only those files that match the pattern given.\n\
+\x20\x20-I pattern    Do not list files that match the given pattern.\n\
+\x20\x20--gitignore   Filter by using .gitignore files.\n\
+\x20\x20--gitfile X   Explicitly read a gitignore file.\n\
+\x20\x20--ignore-case Ignore case when pattern matching.\n\
+\x20\x20--matchdirs   Include directory names in -P pattern matching.\n\
+\x20\x20--metafirst   Print meta-data at the beginning of each line.\n\
+\x20\x20--prune       Prune empty directories from the output.\n\
+\x20\x20--info        Print information about files found in .info files.\n\
+\x20\x20--infofile X  Explicitly read info file.\n\
+\x20\x20--noreport    Turn off file/directory count at end of tree listing.\n\
+\x20\x20--charset X   Use charset X for terminal/HTML and indentation line output.\n\
+\x20\x20--filelimit # Do not descend dirs with more than # files in them.\n\
+\x20\x20--condense    Condense directory singletons to a single line of output.\n\
+\x20\x20-o filename   Output to file instead of stdout.\n\
+\x20\x20------- File options -------\n\
+\x20\x20-q            Print non-printable characters as '?'.\n\
+\x20\x20-N            Print non-printable characters as is.\n\
+\x20\x20-Q            Quote filenames with double quotes.\n\
+\x20\x20-p            Print the protections for each file.\n\
+\x20\x20-u            Displays file owner or UID number.\n\
+\x20\x20-g            Displays file group owner or GID number.\n\
+\x20\x20-s            Print the size in bytes of each file.\n\
+\x20\x20-h            Print the size in a more human readable way.\n\
+\x20\x20--si          Like -h, but use in SI units (powers of 1000).\n\
+\x20\x20--du          Compute size of directories by their contents.\n\
+\x20\x20-D            Print the date of last modification or (-c) status change.\n\
+\x20\x20--timefmt fmt Print and format time according to the format fmt.\n\
+\x20\x20-F            Appends '/', '=', '*', '@', '|' or '>' as per ls -F.\n\
+\x20\x20--inodes      Print inode number of each file.\n\
+\x20\x20--device      Print device ID number to which each file belongs.\n\
+\x20\x20------- Sorting options -------\n\
+\x20\x20-v            Sort files alphanumerically by version.\n\
+\x20\x20-t            Sort files by last modification time.\n\
+\x20\x20-c            Sort files by last status change time.\n\
+\x20\x20-U            Leave files unsorted.\n\
+\x20\x20-r            Reverse the order of the sort.\n\
+\x20\x20--dirsfirst   List directories before files (-U disables).\n\
+\x20\x20--filesfirst  List files before directories (-U disables).\n\
+\x20\x20--sort X      Select sort: name,version,size,mtime,ctime,none.\n\
+\x20\x20------- Graphics options -------\n\
+\x20\x20-i            Don't print indentation lines.\n\
+\x20\x20-A            Print ANSI lines graphic indentation lines.\n\
+\x20\x20-S            Print with CP437 (console) graphics indentation lines.\n\
+\x20\x20-n            Turn colorization off always (-C overrides).\n\
+\x20\x20-C            Turn colorization on always.\n\
+\x20\x20--compress #  Compress indentation lines.\n\
+\x20\x20------- XML/HTML/JSON/HYPERLINK options -------\n\
+\x20\x20-X            Prints out an XML representation of the tree.\n\
+\x20\x20-J            Prints out an JSON representation of the tree.\n\
+\x20\x20-H baseHREF   Prints out HTML format with baseHREF as top directory.\n\
+\x20\x20-T string     Replace the default HTML title and H1 header with string.\n\
+\x20\x20--nolinks     Turn off hyperlinks in HTML output.\n\
+\x20\x20--hintro X    Use file X as the HTML intro.\n\
+\x20\x20--houtro X    Use file X as the HTML outro.\n\
+\x20\x20--hyperlink   Turn on OSC 8 terminal hyperlinks.\n\
+\x20\x20--scheme X    Set OSC 8 hyperlink scheme, default file://\n\
+\x20\x20--authority X Set OSC 8 hyperlink authority/hostname.\n\
+\x20\x20------- Input options -------\n\
+\x20\x20--fromfile    Reads paths from files (.=stdin)\n\
+\x20\x20--fromtabfile Reads trees from tab indented files (.=stdin)\n\
+\x20\x20--fflinks     Process link information when using --fromfile.\n\
+\x20\x20------- Miscellaneous options -------\n\
+\x20\x20--opt-toggle  Enable option toggling.\n\
+\x20\x20--version     Print version and exit.\n\
+\x20\x20--help        Print usage and this help message and exit.\n\
+\x20\x20--            Options processing terminator.\n\
 \n\
 Part of agent-cli-tools <https://github.com/jordiboehme/agent-cli-tools>\n\
 Compatible with tree 2.3.2; the options it leaves out are refused by name.\n\
@@ -232,7 +232,7 @@ struct Deferred {
 const DEFERRED: &[Deferred] = &[
     deferred("=followlinks", "-l", None),
     deferred("=onefs", "-x", Some("find {} -xdev")),
-    deferred("=rerun", "-R", None),
+    deferred("=rerun", "-R", Some("tree -J {}")),
     deferred("=nonprint-mask", "-q", None),
     deferred("=nonprint-raw", "-N", None),
     deferred("=owner", "-u", Some("ls -l {}")),
@@ -240,14 +240,18 @@ const DEFERRED: &[Deferred] = &[
     deferred("=ansi", "-A", None),
     deferred("=cp437", "-S", None),
     deferred("=xml", "-X", Some("tree -J {}")),
-    deferred("=html", "-H", None),
-    deferred("=title", "-T", None),
+    deferred("=html", "-H", Some("tree -J {}")),
+    deferred("=title", "-T", Some("tree -J {}")),
     deferred(
         "gitignore",
         "--gitignore",
         Some("tree -I 'node_modules|target|.git' {}"),
     ),
-    deferred("gitfile", "--gitfile", None),
+    deferred(
+        "gitfile",
+        "--gitfile",
+        Some("tree -I 'node_modules|target|.git' {}"),
+    ),
     deferred("metafirst", "--metafirst", None),
     deferred("info", "--info", None),
     deferred("infofile", "--infofile", None),
@@ -256,9 +260,9 @@ const DEFERRED: &[Deferred] = &[
     deferred("du", "--du", Some("du -sh {}")),
     deferred("inodes", "--inodes", Some("ls -i {}")),
     deferred("device", "--device", Some("find {} -xdev")),
-    deferred("nolinks", "--nolinks", None),
-    deferred("hintro", "--hintro", None),
-    deferred("houtro", "--houtro", None),
+    deferred("nolinks", "--nolinks", Some("tree -J {}")),
+    deferred("hintro", "--hintro", Some("tree -J {}")),
+    deferred("houtro", "--houtro", Some("tree -J {}")),
     deferred("hyperlink", "--hyperlink", None),
     deferred("scheme", "--scheme", None),
     deferred("authority", "--authority", None),
@@ -456,7 +460,10 @@ fn fail(message: &str, with_usage: bool) -> ! {
 // ------------------------------------------------------------ glob matching
 
 /// Split a pattern on its top-level `|`, tree's alternation. A `|`
-/// inside a bracket group or behind a backslash is a literal.
+/// inside a bracket group or behind a backslash is a literal. A pattern
+/// with no `|` at all comes back as one part, which is how an entirely
+/// empty pattern stays the no-op it is upstream while an empty
+/// alternative inside one, `a|` or `|`, matches everything.
 fn alternatives(pattern: &[u8]) -> Vec<&[u8]> {
     let mut parts = Vec::new();
     let mut start = 0;
@@ -512,15 +519,15 @@ fn glob(pattern: &[u8], text: &[u8], ignore_case: bool) -> bool {
             false
         }
         b'?' => !text.is_empty() && glob(&pattern[1..], &text[1..], ignore_case),
-        b'[' => {
-            if text.is_empty() {
-                return false;
+        b'[' => match class_match(pattern, text.first().copied().unwrap_or(0), ignore_case) {
+            Some((matched, rest)) => {
+                !text.is_empty() && matched && glob(rest, &text[1..], ignore_case)
             }
-            match class_match(pattern, text[0], ignore_case) {
-                Some((matched, rest)) => matched && glob(rest, &text[1..], ignore_case),
-                None => false,
-            }
-        }
+            // Upstream's matcher answers -1 for a group with no closing
+            // bracket, and its caller reads anything non-zero as a
+            // match, so reaching one matches whatever is being tested.
+            None => true,
+        },
         b'\\' if pattern.len() > 1 => {
             !text.is_empty()
                 && fold(pattern[1], ignore_case) == fold(text[0], ignore_case)
@@ -535,9 +542,11 @@ fn glob(pattern: &[u8], text: &[u8], ignore_case: bool) -> bool {
 }
 
 /// Read one `[...]` group at the head of `pattern` and say whether
-/// `byte` is in it, handing back what follows the closing bracket. An
-/// unterminated group never matches, which is what tree's own reader
-/// does with it.
+/// `byte` is in it, handing back what follows the closing bracket.
+/// `None` means the group had no closing bracket, which upstream treats
+/// as a malformed pattern that matches: `tree -I 'do['` drops `docs`,
+/// while `tree -I 'z*['` drops nothing, because the scan never reaches
+/// the bracket.
 fn class_match(pattern: &[u8], byte: u8, ignore_case: bool) -> Option<(bool, &[u8])> {
     let mut i = 1;
     let negate = pattern.get(i) == Some(&b'^');
@@ -580,7 +589,13 @@ fn class_match(pattern: &[u8], byte: u8, ignore_case: bool) -> Option<(bool, &[u
 /// `/` in the pattern restricts it to directories.
 fn matches_any(patterns: &[Vec<u8>], path: &[u8], is_dir: bool, ignore_case: bool) -> bool {
     for pattern in patterns {
-        for alt in alternatives(pattern) {
+        let alts = alternatives(pattern);
+        // An alternative with nothing in it matches anything at all,
+        // which is what upstream does with `-I 'node_modules|'`.
+        if alts.len() > 1 && alts.iter().any(|alt| alt.is_empty()) {
+            return true;
+        }
+        for alt in alts {
             let (alt, dirs_only) = match alt.strip_suffix(b"/") {
                 Some(stripped) => (stripped, true),
                 None => (alt, false),
@@ -1994,6 +2009,13 @@ mod tests {
         assert!(ok("[a-z]ocs", "docs"));
         assert!(ok("a\\*b", "a*b"));
         assert!(!ok("a\\*b", "azzb"));
+        // A group with no closing bracket is malformed, and reaching one
+        // is a match; a mismatch before it still ends the scan.
+        assert!(ok("do[", "docs"));
+        assert!(ok("*[", "docs"));
+        assert!(!ok("z*[", "docs"));
+        assert!(!ok("zzz[abc", "docs"));
+        assert!(ok("src[", "src"));
     }
 
     #[test]
@@ -2008,6 +2030,16 @@ mod tests {
         assert!(!matches_any(&dirs_only, b"./src", false, false));
         let either = vec![b"lib.rs|guide.md".to_vec()];
         assert!(matches_any(&either, b"./docs/guide.md", false, false));
+        // An empty alternative matches anything; a pattern that is empty
+        // from end to end has no alternation and matches nothing.
+        for pattern in ["node_modules|", "|node_modules", "|"] {
+            let trailing = vec![pattern.as_bytes().to_vec()];
+            assert!(
+                matches_any(&trailing, b"./src/lib.rs", false, false),
+                "{pattern}"
+            );
+        }
+        assert!(!matches_any(&[b"".to_vec()], b"./src/lib.rs", false, false));
     }
 
     #[test]

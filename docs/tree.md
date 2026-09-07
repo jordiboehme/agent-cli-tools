@@ -84,9 +84,11 @@ See https://github.com/jordiboehme/agent-cli-tools/issues to request it
 | `--inodes` | `ls -i <paths>` |
 | `-u`, `-g` | `ls -l <paths>` |
 | `--device`, `-x` | `find <paths> -xdev` |
-| `-l`, `-N`, `-q`, `-A`, `-S`, `-R`, `-H`, `-T`, `--gitfile`, `--metafirst`, `--compress`, `--condense`, `--info`, `--infofile`, `--fromfile`, `--fromtabfile`, `--fflinks`, `--hyperlink`, `--scheme`, `--authority`, `--nolinks`, `--hintro`, `--houtro`, `--opt-toggle` | none: nothing on a stock macOS does the same job, so the message names no command |
+| `-H`, `-T`, `-R`, `--nolinks`, `--hintro`, `--houtro` | `tree -J <paths>` |
+| `--gitfile` | `tree -I 'node_modules\|target\|.git' <paths>` |
+| `-l`, `-N`, `-q`, `-A`, `-S`, `--metafirst`, `--compress`, `--condense`, `--info`, `--infofile`, `--fromfile`, `--fromtabfile`, `--fflinks`, `--hyperlink`, `--scheme`, `--authority`, `--opt-toggle` | none: nothing on a stock macOS does the same job, so the message names no command |
 
-When no operand was given, the command is shown with the same default tree itself would have used, `.`. All of these are still listed by `--help`, which is upstream's help text unchanged apart from a footer naming this project.
+The HTML options point at `-J`, since JSON is the machine-readable form this build does have. Only the operands of the invocation are substituted, never an option's own argument, so `tree -H base src` says `Use instead: tree -J src`. When no operand was given, the command is shown with the same default tree itself would have used, `.`. All of these are still listed by `--help`, which is upstream's help text unchanged apart from a footer naming this project.
 
 ## Patterns
 
@@ -98,6 +100,8 @@ When no operand was given, the command is shown with the same default tree itsel
 - `\` makes the next character literal;
 - `|` separates alternatives, so `-I 'node_modules|target'` excludes both;
 - a trailing `/` restricts the pattern to directories.
+
+Two malformed shapes are matches rather than errors, as they are upstream. A bracket group with no closing bracket matches whatever the scan had reached when it got there, so `-I 'do['` drops `docs` and `-I 'z*['` drops nothing; and an empty alternative matches everything, so a stray trailing bar in `-I 'node_modules|'` excludes the whole tree. A pattern that is empty from end to end has no alternation in it and excludes nothing.
 
 A pattern is tried against the whole path and against every part of it that starts after a `/`, so `-I 'b/c'` reaches `demo/a/b/c` and a pattern with no slash in it is effectively matched against the base name. Several `-P` or `-I` options are OR'd together.
 
@@ -161,6 +165,8 @@ The report counts the operand as a directory only when something was listed unde
 - **`--filelimit` reads its argument with `atoi`.** Upstream refuses a separate argument that does not start with a digit; here `--filelimit abc` reads as no limit, the same as `--filelimit=abc` does upstream.
 - **A name is escaped as a whole.** In a UTF-8 locale a name that is valid text is printed as it stands and anything else is escaped, where upstream decides character by character within the same name. The escapes themselves match: `\ooo` in a multibyte locale, and `\t`, `\ `, `\\` and friends in a single-byte one.
 - **The six-month window for `-D` is 182 days**, which is where upstream's own constant lands.
+- **The JSON error flag is not sticky.** Once upstream has printed one `{"error": ...}` block, every later entry that is not a directory carries an empty `"contents":[    ]` array for the rest of the run, in later subdirectories too. That is a leak of the flag that produced the block, and this port leaves those entries with no `contents` key, the way an entry before the error is written.
+- **The usage block and `--help` are printed plain.** With colour on, upstream sets every option name in bold and every placeholder in italic in both; here they are the same text without the escapes, so a `--help` captured into a file reads the same either way.
 - **A long option must be spelled out.** Upstream matches long names whole, and so does this, so `tree --nore` is the same `Invalid argument` error here as there, unlike the other commands in this project, which take unambiguous prefixes.
 
 Smaller ones: `--version` names this project instead of tree, `--help` carries a footer pointing here, and diagnostics use ASCII quotes.
