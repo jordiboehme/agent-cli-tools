@@ -26,6 +26,10 @@ path = "src/bin/nproc.rs"
 name = "tac"
 path = "src/bin/tac.rs"
 
+[[bin]]
+name = "pidof"
+path = "src/bin/pidof.rs"
+
 [dependencies]
 libc = "0.2"
 

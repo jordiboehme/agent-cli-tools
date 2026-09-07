@@ -90,6 +90,7 @@ timeout --version
 | Command | Origin | What it does |
 |---|---|---|
 | [`nproc`](docs/nproc.md) | GNU coreutils 9.11 | Print the number of processing units available. |
+| [`pidof`](docs/pidof.md) | procps-ng 4.0.6 | Find the process ids of a running program. |
 | [`tac`](docs/tac.md) | GNU coreutils 9.11 | Print files with the lines reversed, last line first. |
 | [`timeout`](docs/timeout.md) | GNU coreutils 9.11 | Run a command with a time limit. |
 
