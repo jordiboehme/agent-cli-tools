@@ -34,6 +34,10 @@ path = "src/bin/pidof.rs"
 name = "watch"
 path = "src/bin/watch.rs"
 
+[[bin]]
+name = "tree"
+path = "src/bin/tree.rs"
+
 [dependencies]
 libc = "0.2"
 
