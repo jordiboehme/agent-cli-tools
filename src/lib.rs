@@ -2,6 +2,7 @@
 
 pub mod duration;
 pub mod options;
+pub mod proc;
 pub mod signals;
 
 /// The `--version` text every command prints: the GNU shape, naming this
