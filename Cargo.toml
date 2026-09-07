@@ -22,6 +22,10 @@ path = "src/bin/timeout.rs"
 name = "nproc"
 path = "src/bin/nproc.rs"
 
+[[bin]]
+name = "tac"
+path = "src/bin/tac.rs"
+
 [dependencies]
 libc = "0.2"
 
