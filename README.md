@@ -49,7 +49,7 @@ It works, and it is a sledgehammer. It installs about a hundred commands, and on
 
 ## Principles
 
-- **Fill gaps, never shadow.** A command is in scope only if stock macOS ships nothing by that name. GNU-flavoured versions of `sed`, `stat`, or `date` will never be here, however often an agent wishes for `sed -i`.
+- **Fill gaps, never shadow.** A command is in scope only if stock macOS ships nothing by that name and homebrew-core has no formula by that name. GNU-flavoured versions of `sed`, `stat`, or `date` will never be here, however often an agent wishes for `sed -i`, and where Homebrew already packages the real thing this tap installs that instead of a second copy.
 - **Exact compatibility.** Options, quirks, messages, and exit codes match the reference implementation. A script written against the GNU man page behaves the same here.
 - **macOS only.** Linux has these commands. Windows has other problems.
 - **Nothing else.** No configuration, no daemon, no runtime dependencies. One static binary per command.
@@ -62,7 +62,7 @@ It works, and it is a sledgehammer. It installs about a hundred commands, and on
 brew install jordiboehme/tap/agent-cli-tools
 ```
 
-Signed and notarized binaries for Apple silicon and Intel.
+Signed and notarized binaries for Apple silicon and Intel. Homebrew installs `tree` and `watch` alongside them, from homebrew-core.
 
 ### Release archive
 
@@ -90,26 +90,23 @@ timeout --version
 | Command | Origin | What it does |
 |---|---|---|
 | [`nproc`](docs/nproc.md) | GNU coreutils 9.11 | Print the number of processing units available. |
-| [`pidof`](docs/pidof.md) | procps-ng 4.0.6 | Find the process ids of a running program. |
 | [`tac`](docs/tac.md) | GNU coreutils 9.11 | Print files with the lines reversed, last line first. |
 | [`timeout`](docs/timeout.md) | GNU coreutils 9.11 | Run a command with a time limit. |
-| [`tree`](docs/tree.md) | tree 2.3.2 | List the contents of directories as a tree. |
-| [`watch`](docs/watch.md) | procps-ng 4.0.7 | Run a command repeatedly and watch its output change. |
 
 Each page documents the options, exit codes, and the few places where output differs from the original.
 
+`tree` and `watch` are missing from macOS too, but Homebrew already carries the genuine upstreams, so the formula depends on them rather than shipping a second copy of each: `brew install` brings them along and the commands work. `pidof` is gone as of v0.3.0. Homebrew's `pidof` formula is a different program, not the procps-ng one, so there was no honest way to keep the name.
+
 ## Roadmap
 
-Candidates, in rough order of how often agents reach for them. All are absent from stock macOS, so none would shadow an existing command.
+Candidates, in rough order of how often agents reach for them. All are absent from stock macOS and unpackaged by homebrew-core, so none would shadow an existing command.
 
 | Command | Origin | Why agents type it |
 |---|---|---|
 | `shuf` | coreutils | Random samples and `shuf -n 1`. |
-| `sponge` | moreutils | Edit a file in place from a pipeline, `jq ... f \| sponge f`. |
-| `flock` | util-linux | Lock guards in cron, launchd, and loop-runner scripts. |
 | `setsid` | util-linux | Detaching daemons the Linux way. |
 
-Not planned: `realpath` and `readlink -f` (macOS has had them since Ventura and Monterey 12.3), `md5sum` and `sha256sum` (in `/sbin` on current macOS), `wget` (agents recover with `curl`), and anything that already exists on macOS in BSD form.
+Not planned: `realpath` and `readlink -f` (macOS has had them since Ventura and Monterey 12.3), `md5sum` and `sha256sum` (in `/sbin` on current macOS), `wget` (agents recover with `curl`), anything that already exists on macOS in BSD form, and anything homebrew-core already packages under its own name, `sponge` and `flock` among them.
 
 ## Development
 
@@ -120,7 +117,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
-Adding a command: create `src/bin/<name>.rs` and `tests/<name>.rs`, add a `[[bin]]` entry to `Cargo.toml`, add the binary to the `BINARIES` list in `.github/workflows/release.yml`, and document it above. Behaviour must match the reference implementation's man page and, where the man page is vague, its source.
+Adding a command: check first that stock macOS ships nothing by that name and that `brew info <name>` finds no homebrew-core formula, then create `src/bin/<name>.rs` and `tests/<name>.rs`, add a `[[bin]]` entry to `Cargo.toml`, add the binary to the `BINARIES` list in `.github/workflows/release.yml`, and document it above. Behaviour must match the reference implementation's man page and, where the man page is vague, its source.
 
 ## License
 
