@@ -2,9 +2,7 @@
 
 pub mod duration;
 pub mod options;
-pub mod proc;
 pub mod signals;
-pub mod term;
 
 /// The `--version` text every command prints: the GNU shape, naming this
 /// project and its home page so a user can find where the binary came from.

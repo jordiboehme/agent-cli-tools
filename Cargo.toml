@@ -1,6 +1,6 @@
 [package]
 name = "agent-cli-tools"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -25,18 +25,6 @@ path = "src/bin/nproc.rs"
 [[bin]]
 name = "tac"
 path = "src/bin/tac.rs"
-
-[[bin]]
-name = "pidof"
-path = "src/bin/pidof.rs"
-
-[[bin]]
-name = "watch"
-path = "src/bin/watch.rs"
-
-[[bin]]
-name = "tree"
-path = "src/bin/tree.rs"
 
 [dependencies]
 libc = "0.2"
