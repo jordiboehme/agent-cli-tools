@@ -525,14 +525,14 @@ mod tests {
     #[test]
     fn unsupported_options_print_a_runnable_command() {
         assert_eq!(
-            unsupported_text("tree", "--du", Some("du -sh src")),
-            "tree: --du is not implemented in this build\n\
-             Use instead: du -sh src\n\
+            unsupported_text("tac", "--regex", Some("tac -s '\\n'")),
+            "tac: --regex is not implemented in this build\n\
+             Use instead: tac -s '\\n'\n\
              See https://github.com/jordiboehme/agent-cli-tools/issues to request it\n"
         );
         assert_eq!(
-            unsupported_text("watch", "--shotsdir", None),
-            "watch: --shotsdir is not implemented in this build\n\
+            unsupported_text("nproc", "--all-sockets", None),
+            "nproc: --all-sockets is not implemented in this build\n\
              See https://github.com/jordiboehme/agent-cli-tools/issues to request it\n"
         );
     }
