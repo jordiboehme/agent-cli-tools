@@ -97,6 +97,20 @@ Each page documents the options, exit codes, and the few places where output dif
 
 `tree` and `watch` are missing from macOS too, but Homebrew already carries the genuine upstreams, so the formula depends on them rather than shipping a second copy of each: `brew install` brings them along and the commands work. `pidof` is gone as of v0.3.0. Homebrew's `pidof` formula is a different program, not the procps-ng one, so there was no honest way to keep the name.
 
+## Worth installing alongside
+
+The tap fills gaps. It does nothing about what macOS ships old or what homebrew-core already owns, and agents trip over both just as hard. Three formulae cover most of it:
+
+```sh
+brew install bash gh ripgrep
+```
+
+- **`bash`**: macOS ships bash 3.2, frozen in carbonite since 2007 (the last GPLv2 release, and Apple stopped there). Agents write for bash 5: `declare -A`, `mapfile`, `${var,,}`. On 3.2 each of those fails, with a different error every time. Homebrew's bash 5 takes over for `bash script.sh` and `#!/usr/bin/env bash`. A `#!/bin/bash` shebang still gets 3.2, so ask your agent for `env`.
+- **`gh`**: agents open pull requests and read issues with it, and `git` alone can't. Stock macOS doesn't have it.
+- **`ripgrep`**: `rg` is the grep agents grew up with. Claude Code bundles one for its own search tool and still types `rg` in the shell, where it isn't.
+
+Agent typing `flock` or `sponge`? Those are `brew install flock moreutils`.
+
 ## Roadmap
 
 Candidates, in rough order of how often agents reach for them. All are absent from stock macOS and unpackaged by homebrew-core, so none would shadow an existing command.
