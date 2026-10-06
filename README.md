@@ -131,7 +131,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
-Adding a command: check first that stock macOS ships nothing by that name and that `brew info <name>` finds no homebrew-core formula, then create `src/bin/<name>.rs` and `tests/<name>.rs`, add a `[[bin]]` entry to `Cargo.toml`, add the binary to the `BINARIES` list in `.github/workflows/release.yml`, and document it above. Behaviour must match the reference implementation's man page and, where the man page is vague, its source.
+Adding a command: check first that stock macOS ships nothing by that name and that `brew info <name>` finds no homebrew-core formula, then create `src/bin/<name>.rs` and `tests/it/<name>.rs` (plus a `mod <name>;` line in `tests/it/main.rs`), add a `[[bin]]` entry to `Cargo.toml`, add the binary to the `BINARIES` list in `.github/workflows/release.yml`, and document it above. Behaviour must match the reference implementation's man page and, where the man page is vague, its source.
 
 ## License
 
