@@ -8,9 +8,21 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Read only by default: every job can check out the tree and nothing more. A
+# job that needs another scope names it in its own `permissions:` block.
+permissions:
+  contents: read
+
+# A newer push to a pull request cancels the run it supersedes. A push to main
+# keeps one group per commit and never cancels.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: test (${{ matrix.os }})
+    timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -19,23 +31,80 @@ jobs:
         # image GitHub ships and retires in August 2027; drop that leg then.
         os: [macos-latest, macos-15-intel]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         run: rustup show
 
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: nextest@0.9.146
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      # Only main saves the cache, so a pull request cannot plant artifacts
+      # that a later run on main would restore.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo fmt --check
         run: cargo fmt --all --check
 
+      # --locked: Cargo.lock is the input, and a lockfile that would need an
+      # update fails the check instead of being re-resolved on the runner.
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: cargo nextest run
-        run: cargo nextest run
+        run: cargo nextest run --locked
 
       - name: cargo test --doc
-        run: cargo test --doc
+        run: cargo test --doc --locked
+
+  # Static checks of the workflows. actionlint catches expression, type and
+  # shell errors; zizmor catches the security mistakes (template injection,
+  # over-wide tokens, persisted credentials, unpinned or impostor actions).
+  # Both run from images pinned inside the SHA-pinned actions. zizmor fails
+  # the job inline instead of uploading SARIF, so the job needs no write
+  # scope. An accepted finding is ignored with a `# zizmor: ignore[...]`
+  # comment next to its line and a reason above it.
+  workflow-lint:
+    name: workflow-lint
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # actionlint 1.7.12 (the image digest is in the action's settings.json).
+      - name: actionlint
+        uses: devops-actions/actionlint@ec02b36684b2f574f1d219ad0a43b082e46bf3e4 # v0.1.13
+
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: 1.30.1
+          advanced-security: false
+          annotations: true
+
+  # Dependency audit: advisories (RustSec), licenses (the allowlist in
+  # deny.toml), sources (crates.io only) and bans. Runs on every change, since
+  # a new advisory appears without any change here.
+  cargo-deny:
+    name: cargo-deny
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          # The rust-toolchain.toml pin, so the action's container does not
+          # resolve a different toolchain. Move it together with that file.
+          rust-version: '1.99.0'
+          arguments: --all-features --locked
+          command: check
