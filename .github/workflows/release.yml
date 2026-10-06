@@ -22,7 +22,9 @@ permissions:
 jobs:
   build:
     name: build (${{ matrix.platform }})
-    timeout-minutes: 60
+    # Notarization submits the binaries one after another and allows each 30
+    # minutes; on a slow Apple queue that alone can approach 90 minutes.
+    timeout-minutes: 120
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
