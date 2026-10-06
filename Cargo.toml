@@ -2,7 +2,7 @@
 name = "agent-cli-tools"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.98"
+rust-version = "1.99"
 license = "MIT"
 description = "The missing CLI commands for agent harnesses"
 repository = "https://github.com/jordiboehme/agent-cli-tools"
@@ -27,7 +27,7 @@ name = "tac"
 path = "src/bin/tac.rs"
 
 [dependencies]
-libc = "0.2"
+libc = "=0.2.190"
 
 [profile.release]
 lto = true
