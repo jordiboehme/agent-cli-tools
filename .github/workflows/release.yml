@@ -14,9 +14,15 @@ env:
   # adding its name here and a bin.install line in the formula below.
   BINARIES: timeout nproc tac
 
+# Read only by default. The jobs that publish name the scopes they need in
+# their own `permissions:` block.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: build (${{ matrix.platform }})
+    timeout-minutes: 60
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -29,26 +35,30 @@ jobs:
             platform: macos-intel
             # The last Intel image GitHub ships; it retires in August 2027.
             os: macos-15-intel
+    env:
+      TARGET: ${{ matrix.target }}
+      PLATFORM: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         run: rustup show
 
       - name: Add release target
-        run: rustup target add ${{ matrix.target }}
+        run: rustup target add "$TARGET"
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: release-${{ matrix.target }}
+      # No Rust cache in a release build: a tag run can only restore what
+      # main saved, so a poisoned cache entry would end up in a signed binary.
 
       - name: Resolve release version
         id: version
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "version=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           else
             echo "version=v0.0.0-dev" >> "$GITHUB_OUTPUT"
           fi
@@ -61,27 +71,43 @@ jobs:
         run: |
           set -euo pipefail
           manifest="v$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
-          if [ "$manifest" != "${{ github.ref_name }}" ]; then
-            echo "::error::tag ${{ github.ref_name }} does not match Cargo.toml version $manifest"
+          if [ "$manifest" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $manifest"
             exit 1
           fi
 
+      # cargo-auditable embeds the resolved dependency list in a section of
+      # the binary (a few kB), so `cargo audit bin`, Trivy, Grype and
+      # osv-scanner can name the crates inside a shipped binary later. The
+      # install action fetches a prebuilt binary and checks it against the
+      # SHA-256 in its manifest; `fallback: none` fails the step rather than
+      # downloading an unpinned binary.
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-auditable@0.7.7
+          fallback: none
+
+      # --locked: Cargo.lock is the build's input, and a lockfile that would
+      # need an update fails the build instead of being re-resolved here.
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo auditable build --release --locked --target "$TARGET"
 
       - name: Smoke test
         shell: bash
         run: |
           set -euo pipefail
           for bin in $BINARIES; do
-            path="target/${{ matrix.target }}/release/$bin"
+            path="target/$TARGET/release/$bin"
             [ -f "$path" ] || { echo "::error::$path is missing"; exit 1; }
             "$path" --version
           done
-          target/${{ matrix.target }}/release/timeout 5 true
-          target/${{ matrix.target }}/release/timeout 0.2 sleep 5 && exit 1 || [ $? -eq 124 ]
-          test "$(target/${{ matrix.target }}/release/nproc --ignore=99999)" = "1"
-          printf 'a\nb\n' | target/${{ matrix.target }}/release/tac | head -1 | grep -qx b
+          dir="target/$TARGET/release"
+          "$dir/timeout" 5 true
+          rc=0
+          "$dir/timeout" 0.2 sleep 5 || rc=$?
+          [ "$rc" -eq 124 ]
+          test "$("$dir/nproc" --ignore=99999)" = "1"
+          printf 'a\nb\n' | "$dir/tac" | head -1 | grep -qx b
 
       # Sign each bare Mach-O with a Developer ID Application certificate
       # under the hardened runtime, then notarize with notarytool. A bare
@@ -107,7 +133,7 @@ jobs:
           done
           if [ "${#missing[@]}" -eq 0 ]; then
             echo "sign=true" >> "$GITHUB_OUTPUT"
-          elif [ "${#missing[@]}" -eq 6 ] && [ "${{ github.ref_type }}" != "tag" ]; then
+          elif [ "${#missing[@]}" -eq 6 ] && [ "$GITHUB_REF_TYPE" != "tag" ]; then
             echo "::notice::Apple signing secrets are not configured; this dry run produces UNSIGNED binaries"
             echo "sign=false" >> "$GITHUB_OUTPUT"
           else
@@ -150,7 +176,7 @@ jobs:
             exit 1
           fi
           for bin in $BINARIES; do
-            path="target/${{ matrix.target }}/release/$bin"
+            path="target/$TARGET/release/$bin"
             identifier="io.github.jordiboehme.agent-cli-tools.$bin"
             codesign --force --timestamp --options runtime \
               --identifier "$identifier" \
@@ -179,7 +205,7 @@ jobs:
           zip="$RUNNER_TEMP/notarize.zip"
           rm -f "$zip"
           for bin in $BINARIES; do
-            ditto -c -k --keepParent "target/${{ matrix.target }}/release/$bin" "$RUNNER_TEMP/notarize-$bin.zip"
+            ditto -c -k --keepParent "target/$TARGET/release/$bin" "$RUNNER_TEMP/notarize-$bin.zip"
           done
           for bin in $BINARIES; do
             result="$RUNNER_TEMP/notarize-$bin.json"
@@ -209,9 +235,9 @@ jobs:
         run: |
           set -euo pipefail
           for bin in $BINARIES; do
-            "target/${{ matrix.target }}/release/$bin" --version
+            "target/$TARGET/release/$bin" --version
           done
-          target/${{ matrix.target }}/release/timeout 5 true
+          "target/$TARGET/release/timeout" 5 true
 
       - name: Delete signing keychain
         if: always()
@@ -226,13 +252,15 @@ jobs:
       - name: Stage and package
         id: stage
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          name="agent-cli-tools-${{ steps.version.outputs.version }}-${{ matrix.platform }}"
+          name="agent-cli-tools-${RELEASE_VERSION}-${PLATFORM}"
           stage="dist/$name"
           mkdir -p "$stage"
           for bin in $BINARIES; do
-            cp "target/${{ matrix.target }}/release/$bin" "$stage/"
+            cp "target/$TARGET/release/$bin" "$stage/"
           done
           cp LICENSE README.md "$stage/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
@@ -245,42 +273,157 @@ jobs:
           path: dist/${{ steps.stage.outputs.name }}.tar.gz
           if-no-files-found: error
 
+  # One CycloneDX SBOM per release target. No tag guard: a workflow_dispatch
+  # dry run generates them too, it just has nowhere to publish them.
+  sbom:
+    name: generate the SBOMs
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    # Read only: the tools this job installs never get a token that can write.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup show
+
+      # The same version string the archives carry, so an SBOM sits next to
+      # the archive it describes under the same prefix.
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "version=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=v0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-cyclonedx@0.5.9
+          fallback: none
+
+      # cargo-cyclonedx writes the file next to Cargo.toml. It has no --locked
+      # flag; the diff check at the end proves it did not touch the lockfile.
+      - name: Generate the SBOMs
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          while read -r target platform; do
+            [ -n "$target" ] || continue
+            name="agent-cli-tools-${RELEASE_VERSION}-${platform}.cdx"
+            cargo cyclonedx --format json --spec-version 1.5 \
+              --target "$target" --override-filename "$name"
+            mv "${name}.json" "sbom/${name}.json"
+          done <<'TARGETS'
+          aarch64-apple-darwin macos-arm64
+          x86_64-apple-darwin macos-intel
+          TARGETS
+          git diff --exit-code Cargo.lock
+          for f in sbom/*.cdx.json; do
+            jq -e '[.components[].name] | index("libc") != null' "$f" > /dev/null
+          done
+          ls -la sbom
+
+      - name: Upload the SBOMs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sboms
+          path: sbom/*.cdx.json
+          if-no-files-found: error
+
   publish:
     name: publish release
-    needs: build
+    needs: [build, sbom]
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     if: github.ref_type == 'tag'
+    # id-token and attestations: keyless signing of the attestations below
+    # (Sigstore through GitHub's OIDC token), nothing else.
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Download all archives
+      - name: Download all archives and SBOMs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: downloads
 
-      - name: Collect archives and generate checksums
+      - name: Collect assets and generate checksums
         run: |
           set -euo pipefail
           mkdir -p release
-          find downloads -type f -name '*.tar.gz' -exec cp {} release/ \;
+          find downloads -type f \( -name '*.tar.gz' -o -name '*.cdx.json' \) -exec cp {} release/ \;
           cd release
-          sha256sum * > SHA256SUMS
+          sha256sum -- * > SHA256SUMS
           ls -la
+
+      # actions/attest fails only when a whole subject list matches nothing,
+      # so a renamed asset would drop out of its attestation without a sound.
+      # Every path the attest steps below use is checked here first.
+      - name: Check the attestation subjects exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in SHA256SUMS \
+            "agent-cli-tools-${GITHUB_REF_NAME}-macos-arm64.tar.gz" \
+            "agent-cli-tools-${GITHUB_REF_NAME}-macos-arm64.cdx.json" \
+            "agent-cli-tools-${GITHUB_REF_NAME}-macos-intel.tar.gz" \
+            "agent-cli-tools-${GITHUB_REF_NAME}-macos-intel.cdx.json"; do
+            [ -f "release/$f" ] || { echo "::error::missing attestation subject release/$f"; missing=1; }
+          done
+          exit "$missing"
+
+      # Build provenance for every release asset, SHA256SUMS and the SBOMs
+      # included. Verify with
+      # `gh attestation verify <file> --repo jordiboehme/agent-cli-tools`.
+      # Before the release is created, so a failed attestation stops the
+      # release rather than leaving it published without provenance.
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release/*
+
+      - name: Attest the macos-arm64 SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          sbom-path: release/agent-cli-tools-${{ github.ref_name }}-macos-arm64.cdx.json
+          subject-path: release/agent-cli-tools-${{ github.ref_name }}-macos-arm64.tar.gz
+
+      - name: Attest the macos-intel SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          sbom-path: release/agent-cli-tools-${{ github.ref_name }}-macos-intel.cdx.json
+          subject-path: release/agent-cli-tools-${{ github.ref_name }}-macos-intel.tar.gz
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "${{ github.ref_name }}" release/* \
-            --title "${{ github.ref_name }}" \
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --title "$GITHUB_REF_NAME" \
             --generate-notes
 
   homebrew:
     name: update homebrew tap
     needs: publish
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     if: github.ref_type == 'tag'
     permissions:
@@ -291,27 +434,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p /tmp/release
-          gh release download "${{ github.ref_name }}" \
-            --repo "${{ github.repository }}" \
-            --pattern SHA256SUMS --dir /tmp/release
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS --dir "$RUNNER_TEMP/release"
 
       - name: Regenerate and push the formula
         env:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="${{ github.ref_name }}"
+          TAG="$GITHUB_REF_NAME"
           VERSION="${TAG#v}"
-          sums="/tmp/release/SHA256SUMS"
+          sums="$RUNNER_TEMP/release/SHA256SUMS"
           sha_arm=$(grep "agent-cli-tools-${TAG}-macos-arm64.tar.gz" "$sums" | awk '{print $1}')
           sha_intel=$(grep "agent-cli-tools-${TAG}-macos-intel.tar.gz" "$sums" | awk '{print $1}')
 
           git clone "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/jordiboehme/homebrew-tap.git" \
-            "${{ runner.temp }}/homebrew-tap"
-          mkdir -p "${{ runner.temp }}/homebrew-tap/Formula"
+            "$RUNNER_TEMP/homebrew-tap"
+          mkdir -p "$RUNNER_TEMP/homebrew-tap/Formula"
 
-          cat > "${{ runner.temp }}/homebrew-tap/Formula/agent-cli-tools.rb" << FORMULA
+          cat > "$RUNNER_TEMP/homebrew-tap/Formula/agent-cli-tools.rb" << FORMULA
           class AgentCliTools < Formula
             desc "The missing CLI commands for agent harnesses"
             homepage "https://github.com/jordiboehme/agent-cli-tools"
@@ -349,7 +492,7 @@ jobs:
           end
           FORMULA
 
-          cd "${{ runner.temp }}/homebrew-tap"
+          cd "$RUNNER_TEMP/homebrew-tap"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/agent-cli-tools.rb
