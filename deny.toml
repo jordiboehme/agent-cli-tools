@@ -1,0 +1,30 @@
+# cargo-deny configuration: advisories, licenses, sources and bans.
+# CI runs `cargo deny --all-features --locked check` on every pull request
+# and every push to main (.github/workflows/ci.yml, job cargo-deny).
+
+[graph]
+# Only the targets the project ships.
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+all-features = true
+
+[advisories]
+# Vulnerabilities fail the build. An ignored advisory needs a reason and the
+# date of the decision: { id = "RUSTSEC-YYYY-NNNN", reason = "YYYY-MM-DD: why" }.
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# Exactly the licenses the lockfile uses today (2026-10-07). A dependency that
+# brings a new license fails the check until it is added here on purpose.
+allow = ["Apache-2.0", "MIT"]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
